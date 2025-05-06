@@ -175,3 +175,9 @@ cython_debug/
 
 
 server.htpasswd
+data/chroma
+data/chroma-dev
+data/minio
+data/minio-dev
+data/postgres
+data/postgres-dev
