@@ -1,0 +1,67 @@
+name: govstack-test-server
+
+services:
+  api:
+    build:
+      args:
+        PIP_EXTRA_ARGS: "--no-cache-dir --no-binary=:all:"
+      context: .
+      dockerfile: docker/api.dev.Dockerfile
+    ports:
+      - "5005:5005"
+    volumes:
+      - ./app:/app/app
+      - ./.env.dev:/app/.env
+    env_file:
+      - .env.dev
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://postgres:${POSTGRES_PASSWORD:-postgres}@postgres-dev:5432/govstackdb
+    depends_on:
+      postgres-dev:
+        condition: service_healthy
+      chroma-dev:
+        condition: service_started
+    networks:
+      - govstack-dev-network
+    restart: unless-stopped
+
+  postgres-dev:
+    image: postgres:latest
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DB: govstackdb
+    volumes:
+      - postgres-dev-data:/var/lib/postgresql/data
+    networks:
+      - govstack-dev-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  chroma-dev:
+    image: chromadb/chroma:latest
+    volumes:
+      - ./chroma-dev-data:/chroma/chroma
+      - ./server.htpasswd:/chroma/server.htpasswd:ro
+    ports:
+      - ${CHROMA_DEV_PORT:-8001}:8000
+    environment:
+      - AUTH_CREDENTIALS_FILE=/chroma/server.htpasswd
+      - AUTH_PROVIDER=basic
+    networks:
+      - govstack-dev-network
+    restart: unless-stopped
+
+networks:
+  govstack-dev-network:
+    driver: bridge
+
+volumes:
+  postgres-dev-data:
+    # This creates a named volume that persists PostgreSQL data
+    driver: local

@@ -1,0 +1,78 @@
+name: govstack-server
+
+services:
+  govstack-server:
+    build:
+      args:
+        PIP_EXTRA_ARGS: "--no-cache-dir --no-binary=:all:"
+      context: .
+      dockerfile: docker/api.Dockerfile
+    ports:
+      - "5000:5000"
+    env_file:
+      - .env
+    volumes:
+      - ./data:/app/data
+      - ./storage:/app/storage
+    runtime: ${DOCKER_RUNTIME:-runc}
+    environment:
+      - USE_GPU=${USE_GPU:-false}
+      - CHROMA_HOST=chroma
+      - CHROMA_PORT=8000  # Internal port, not the exposed port
+      - SENTRY_DSN=${SENTRY_DSN:-}  # Make Sentry DSN optional
+      - DATABASE_URL=postgresql://postgres:${POSTGRES_PASSWORD:-postgres}@postgres:5432/govstackdb
+    networks:
+      - govstack-net
+    depends_on:
+      - chroma
+      - postgres
+
+  postgres:
+    image: postgres:15
+    environment:
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-postgres}
+      - POSTGRES_USER=postgres
+      - POSTGRES_DB=govstackdb
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    networks:
+      - govstack-net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  chroma:
+    image: chromadb/chroma:latest
+    ports:
+      - "8050:8000"  # Map host port 8050 to container port 8000
+    environment:
+      - CHROMA_SERVER_AUTHN_CREDENTIALS_FILE=/chroma/server.htpasswd
+      - CHROMA_SERVER_AUTHN_PROVIDER=chromadb.auth.basic_authn.BasicAuthenticationServerProvider
+    volumes:
+      - chroma_backup:/chroma/chroma:rw
+      - ./server.htpasswd:/chroma/server.htpasswd:ro
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/v1/heartbeat"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - govstack-net
+
+volumes:
+  chroma_backup:
+    name: chroma_backup
+  data:
+    name: govstack_data
+  storage:
+    name: govstack_storage
+  postgres_data:
+    name: postgres_data
+
+networks:
+  govstack-net:
+    name: govstack-network
