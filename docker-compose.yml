@@ -20,7 +20,7 @@ services:
       - CHROMA_HOST=chroma
       - CHROMA_PORT=8000  # Internal port, not the exposed port
       - SENTRY_DSN=${SENTRY_DSN:-}  # Make Sentry DSN optional
-      - DATABASE_URL=postgresql://postgres:${POSTGRES_PASSWORD:-postgres}@postgres:5432/govstackdb
+      - DATABASE_URL=postgresql+asyncpg://postgres:${POSTGRES_PASSWORD:-postgres}@postgres:5432/govstackdb
       - MINIO_ENDPOINT=minio
       - MINIO_PORT=9000
       - MINIO_ACCESS_KEY=${MINIO_ACCESS_KEY:-minioadmin}
