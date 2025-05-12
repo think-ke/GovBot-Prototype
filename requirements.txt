@@ -9,3 +9,11 @@ psycopg2-binary
 sentry-sdk
 gunicorn
 minio
+beautifulsoup4
+requests
+aiohttp
+html2text
+markdownify
+chardet
+llama_index
+python-multipart
