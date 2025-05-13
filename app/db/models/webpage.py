@@ -28,12 +28,11 @@ class Webpage(Base):
     meta_data = Column(JSON, nullable=True)  # Renamed from 'metadata' which is reserved
     is_seed = Column(Boolean, default=False)
     content_type = Column(String(100), nullable=True)
+    collection_id = Column(String(64), nullable=True, index=True)  # Identifier for crawl jobs/collections
     
     # Links relationship
     outgoing_links = relationship("WebpageLink", foreign_keys="WebpageLink.source_id", back_populates="source")
-    incoming_links = relationship("WebpageLink", foreign_keys="WebpageLink.target_id", back_populates="target")
-
-    def to_dict(self) -> Dict[str, Any]:
+    incoming_links = relationship("WebpageLink", foreign_keys="WebpageLink.target_id", back_populates="target")    def to_dict(self) -> Dict[str, Any]:
         """
         Convert webpage model to dictionary representation.
         """
@@ -50,6 +49,7 @@ class Webpage(Base):
             "meta_data": self.meta_data,
             "is_seed": self.is_seed,
             "content_type": self.content_type,
+            "collection_id": self.collection_id,
         }
 
 

@@ -100,6 +100,96 @@ GovStack provides an AI-powered interface to Kenya's eCitizen services, helping 
 
 The system uses Retrieval Augmented Generation (RAG) to ensure responses are grounded in accurate, up-to-date official information.
 
+## Web Crawler Features
+
+### Collection-Based Crawling
+
+The web crawler allows you to organize crawled webpages into collections using the `collection_id` parameter. This is useful for:
+
+- Separating crawls by topic or domain
+- Tracking different crawl sessions
+- Organizing content for specific RAG applications
+
+#### Example crawl with collection_id:
+
+```bash
+curl -X POST http://localhost:5000/crawl/ \
+  -H "Content-Type: application/json" \
+  -d '{
+    "url": "https://ecitizen.go.ke/",
+    "depth": 3,
+    "concurrent_requests": 10,
+    "follow_external": false,
+    "strategy": "breadth_first",
+    "collection_id": "ecitizen-may2023"
+  }'
+```
+
+#### Retrieve webpages by collection:
+
+```bash
+curl http://localhost:5000/webpages/collection/ecitizen-may2023
+```
+
+#### Update existing webpages with collection_id:
+
+You can use the provided script to add collection_id to existing webpages:
+
+```bash
+# List existing collections
+python scripts/update_webpage_collections.py list
+
+# Add collection_id to all webpages from a specific domain
+python scripts/update_webpage_collections.py domain ecitizen.go.ke ecitizen-official
+
+# Add collection_id to webpages by ID range
+python scripts/update_webpage_collections.py id-range 1 100 batch-one
+```
+
+This feature makes it easy to manage multiple crawl jobs and organize content by source or topic.
+
+### Extracting Crawled Text Content
+
+You can extract all text content from webpages in a specific collection, with filtering by crawl time:
+
+```bash
+# Extract all texts from a collection as raw text
+curl -X POST http://localhost:5000/extract-texts/ \
+  -H "Content-Type: application/json" \
+  -d '{
+    "collection_id": "ecitizen-may2023",
+    "hours_ago": 24,
+    "output_format": "text"
+  }'
+
+# Extract as JSON with metadata
+curl -X POST http://localhost:5000/extract-texts/ \
+  -H "Content-Type: application/json" \
+  -d '{
+    "collection_id": "ecitizen-may2023",
+    "hours_ago": 24,
+    "output_format": "json"
+  }'
+
+# Get collection statistics
+curl http://localhost:5000/collection-stats/ecitizen-may2023
+```
+
+This feature makes it easy to:
+- Export crawled content for further processing
+- Use the extracted text for training or fine-tuning LLMs
+- Create custom datasets from web content
+- Filter by recency to get only the latest information
+
+## Database Migration
+
+If you're updating an existing installation, you'll need to add the collection_id column to the database:
+
+```bash
+# Run the migration script to add collection_id column
+python scripts/add_collection_id_column.py
+```
+
 ## Development Workflow
 
 ### Local Development

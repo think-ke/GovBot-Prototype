@@ -308,18 +308,19 @@ class WebCrawler:
     """
     Advanced web crawler with configurable settings.
     """
-    
-    def __init__(self, settings=None, engine=None):
+      def __init__(self, settings=None, engine=None, collection_id=None):
         """
         Initialize the web crawler.
         
         Args:
             settings: Crawler settings
             engine: SQLAlchemy engine for database operations
+            collection_id: Identifier for grouping crawl jobs
         """
         self.settings = DEFAULT_SETTINGS.copy()
         if settings:
-            self.settings.update(settings)        
+            self.settings.update(settings)
+        self.collection_id = collection_id
         # Ensure the database URL uses the asyncpg driver
         db_url = DATABASE_URL
         if not db_url.startswith('postgresql+asyncpg://'):
@@ -330,7 +331,7 @@ class WebCrawler:
             elif db_url.startswith('postgresql+psycopg2://'):
                 db_url = db_url.replace('postgresql+psycopg2://', 'postgresql+asyncpg://', 1)
         
-        self.engine = engine or create_async_engine(db_url)
+        self.engine = engine or create_async_engine(db_url, echo=False)
         self.session_maker = sessionmaker(self.engine, class_=AsyncSession, expire_on_commit=False)
         
         self.robots_parser = RobotsTxtParser()
@@ -356,7 +357,6 @@ class WebCrawler:
         """
         Get or create a webpage record in the database.
         """
-        logger.info(f"Looking for webpage record with URL: {url}")
         query = select(Webpage).where(Webpage.url == url)
         
         try:
@@ -364,12 +364,12 @@ class WebCrawler:
             webpage = result.scalars().first()
             
             if not webpage:                
-                logger.info(f"No existing webpage found for URL: {url}. Creating new record at depth {depth}")
-                webpage = Webpage(
+                logger.info(f"No existing webpage found for URL: {url}. Creating new record at depth {depth}")                webpage = Webpage(
                     url=url,
                     crawl_depth=depth,
                     is_seed=is_seed,
-                    first_crawled=datetime.now(timezone.utc)
+                    first_crawled=datetime.now(timezone.utc),
+                    collection_id=self.collection_id
                 )
                 session.add(webpage)
                 logger.debug(f"Added new webpage to session: {url}")
@@ -989,7 +989,7 @@ def get_page_as_markdown(url: str, skip_ssl_verification: bool = False) -> str:
 
 async def crawl_website(seed_url: str, depth: int = 3, concurrent_requests: int = 10, 
                         follow_external: bool = False, strategy: str = 'breadth_first',
-                        session_maker=None, task_status=None) -> Dict:
+                        collection_id: Optional[str] = None, session_maker=None, task_status=None) -> Dict:
     """
     Crawl a website starting from a seed URL.
     
@@ -1012,9 +1012,8 @@ async def crawl_website(seed_url: str, depth: int = 3, concurrent_requests: int 
         'follow_external_links': follow_external,
         'crawl_strategy': strategy
     })
-    
-    # Create crawler instance
-    crawler = WebCrawler(settings=settings)
+      # Create crawler instance
+    crawler = WebCrawler(settings=settings, collection_id=collection_id)
     
     # If session_maker is provided, use it
     if session_maker:

@@ -4,7 +4,7 @@ FastAPI application for the GovStack service.
 
 import os
 import logging
-from fastapi import FastAPI, Depends, HTTPException, UploadFile, File, Form, BackgroundTasks
+from fastapi import FastAPI, Depends, HTTPException, UploadFile, File, Form, BackgroundTasks, Query
 from fastapi.middleware.cors import CORSMiddleware
 from datetime import datetime, timezone, timedelta
 import uuid
@@ -14,13 +14,14 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.future import select
 import uvicorn
 from pydantic import BaseModel, HttpUrl, Field
-from typing import List, Optional, Dict, Any
+from typing import List, Optional, Dict, Any, Union
 
 from app.utils.storage import minio_client
 from app.db.models.document import Document, Base as DocumentBase
 from app.db.models.webpage import Webpage, WebpageLink, Base as WebpageBase
 from app.core.crawlers.web_crawler import crawl_website
 from app.core.crawlers.utils import get_page_as_markdown
+from app.core.rag.indexer import extract_text_batch, get_collection_stats
 
 # Configure logging
 logging.basicConfig(
@@ -28,6 +29,10 @@ logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
 )
 logger = logging.getLogger(__name__)
+
+# Suppress SQLAlchemy logging
+logging.getLogger('sqlalchemy').setLevel(logging.WARNING)
+logging.getLogger('sqlalchemy.engine').setLevel(logging.WARNING)
 
 # Initialize FastAPI app
 app = FastAPI(
@@ -47,7 +52,7 @@ app.add_middleware(
 
 # Database configuration
 DATABASE_URL = os.getenv("DATABASE_URL", "postgresql+asyncpg://postgres:postgres@localhost/govstackdb")
-engine = create_async_engine(DATABASE_URL, echo=True)
+engine = create_async_engine(DATABASE_URL, echo=False)
 async_session = sessionmaker(
     engine, class_=AsyncSession, expire_on_commit=False
 )
@@ -266,6 +271,7 @@ class CrawlWebsiteRequest(BaseModel):
     concurrent_requests: int = Field(default=10, ge=1, le=50)
     follow_external: bool = Field(default=False)
     strategy: str = Field(default="breadth_first", pattern="^(breadth_first|depth_first)$")
+    collection_id: Optional[str] = Field(default=None, description="Identifier for grouping crawl jobs")
     
 class WebpageResponse(BaseModel):
     """Response model for webpage data."""
@@ -275,6 +281,7 @@ class WebpageResponse(BaseModel):
     crawl_depth: int
     last_crawled: Optional[str] = None
     status_code: Optional[int] = None
+    collection_id: Optional[str] = None
     
 class WebpageLinkResponse(BaseModel):
     """Response model for webpage link data."""
@@ -304,6 +311,13 @@ class CrawlStatusResponse(BaseModel):
     errors: Optional[int] = None
     start_time: Optional[str] = None
     finished: bool = False
+    collection_id: Optional[str] = None
+
+class CollectionTextRequest(BaseModel):
+    """Request model for extracting texts from a collection."""
+    collection_id: str
+    hours_ago: Optional[int] = 24
+    output_format: str = Field(default="text", pattern="^(text|json|markdown)$")
 
 # In-memory storage for background task status
 crawl_tasks = {}
@@ -329,8 +343,7 @@ async def start_crawl(
     try:
         # Generate a unique task ID
         task_id = str(uuid.uuid4())
-        
-        # Initialize task status
+          # Initialize task status
         crawl_tasks[task_id] = {
             "status": "starting",
             "seed_urls": [str(request.url)],
@@ -339,6 +352,7 @@ async def start_crawl(
             "total_urls_queued": 1,
             "errors": 0,
             "finished": False,
+            "collection_id": request.collection_id,
         }
         
         # Define the background task function
@@ -346,13 +360,13 @@ async def start_crawl(
             try:
                 # Update status to running
                 crawl_tasks[task_id]["status"] = "running"
-                  # Start the crawl operation
-                result = await crawl_website(
+                  # Start the crawl operation                result = await crawl_website(
                     seed_url=str(request.url),
                     depth=request.depth,
                     concurrent_requests=request.concurrent_requests,
                     follow_external=request.follow_external,
                     strategy=request.strategy,
+                    collection_id=request.collection_id,
                     session_maker=async_session,
                     task_status=crawl_tasks[task_id]
                 )
@@ -477,15 +491,15 @@ async def list_webpages(
         query = select(Webpage).offset(skip).limit(limit)
         result = await db.execute(query)
         webpages = result.scalars().all()
-        
-        return [
+          return [
             WebpageResponse(
                 id=wp.id,
                 url=wp.url,
                 title=wp.title,
                 crawl_depth=wp.crawl_depth,
                 last_crawled=wp.last_crawled.isoformat() if wp.last_crawled else None,
-                status_code=wp.status_code
+                status_code=wp.status_code,
+                collection_id=wp.collection_id
             ) 
             for wp in webpages
         ]
@@ -549,6 +563,152 @@ async def get_webpage(
     except Exception as e:
         logger.error(f"Error retrieving webpage: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Error retrieving webpage: {str(e)}")
+
+# Get webpages by collection_id
+@app.get("/webpages/collection/{collection_id}", response_model=List[WebpageResponse])
+async def get_webpages_by_collection(
+    collection_id: str,
+    limit: int = Query(100, ge=1, le=1000),
+    offset: int = Query(0, ge=0),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Get all webpages in a specific collection.
+    
+    Args:
+        collection_id: The collection ID to filter by
+        limit: Maximum number of results to return
+        offset: Number of results to skip
+        db: Database session
+        
+    Returns:
+        List of webpages in the collection
+    """
+    try:
+        query = select(Webpage).where(Webpage.collection_id == collection_id).limit(limit).offset(offset)
+        result = await db.execute(query)
+        webpages = result.scalars().all()
+        
+        return [WebpageResponse(
+            id=webpage.id,
+            url=webpage.url,
+            title=webpage.title,
+            crawl_depth=webpage.crawl_depth,
+            last_crawled=webpage.last_crawled.isoformat() if webpage.last_crawled else None,
+            status_code=webpage.status_code,
+            collection_id=webpage.collection_id
+        ) for webpage in webpages]
+    except Exception as e:
+        logger.error(f"Error fetching webpages by collection: {e}")
+        raise HTTPException(status_code=500, detail=f"Error fetching webpages: {str(e)}")
+
+# Get a webpage by URL
+@app.get("/webpages/by-url/", response_model=WebpageResponse)
+async def get_webpage_by_url(
+    url: str = Query(..., description="The URL of the webpage to fetch"),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Get a webpage by its URL.
+    
+    Args:
+        url: The URL of the webpage to fetch
+        db: Database session
+        
+    Returns:
+        Webpage data
+    """
+    try:
+        query = select(Webpage).where(Webpage.url == url)
+        result = await db.execute(query)
+        webpage = result.scalars().first()
+        
+        if not webpage:
+            raise HTTPException(status_code=404, detail="Webpage not found")
+        
+        return WebpageResponse(
+            id=webpage.id,
+            url=webpage.url,
+            title=webpage.title,
+            crawl_depth=webpage.crawl_depth,
+            last_crawled=webpage.last_crawled.isoformat() if webpage.last_crawled else None,
+            status_code=webpage.status_code,
+            collection_id=webpage.collection_id
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error fetching webpage by URL: {e}")
+        raise HTTPException(status_code=500, detail=f"Error fetching webpage: {str(e)}")
+
+@app.post("/extract-texts/", response_model=Union[str, List[Dict[str, Any]]])
+async def extract_texts_from_collection(
+    request: CollectionTextRequest,
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Extract text content from webpages in a specific collection.
+    
+    Args:
+        request: Extraction configuration
+        db: Database session
+        
+    Returns:
+        Extracted text content in the requested format
+    """
+    try:
+        texts = await extract_text_batch(
+            db=db,
+            collection_id=request.collection_id,
+            hours_ago=request.hours_ago,
+            output_format=request.output_format
+        )
+        return texts
+    except Exception as e:
+        logger.error(f"Error extracting texts: {e}")
+        raise HTTPException(status_code=500, detail=f"Error extracting texts: {str(e)}")
+
+@app.get("/collection-stats/{collection_id}", response_model=Dict[str, Any])
+async def get_collection_statistics(
+    collection_id: str,
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Get statistics about a specific collection.
+    
+    Args:
+        collection_id: The collection ID to get stats for
+        db: Database session
+        
+    Returns:
+        Collection statistics
+    """
+    try:
+        stats = await get_collection_stats(db=db, collection_id=collection_id)
+        return stats
+    except Exception as e:
+        logger.error(f"Error getting collection stats: {e}")
+        raise HTTPException(status_code=500, detail=f"Error getting collection stats: {str(e)}")
+
+@app.get("/collection-stats/", response_model=Dict[str, Any])
+async def get_all_collection_statistics(
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Get statistics about all collections.
+    
+    Args:
+        db: Database session
+        
+    Returns:
+        Statistics for all collections
+    """
+    try:
+        stats = await get_collection_stats(db=db)
+        return stats
+    except Exception as e:
+        logger.error(f"Error getting collection stats: {e}")
+        raise HTTPException(status_code=500, detail=f"Error getting collection stats: {str(e)}")
 
 if __name__ == "__main__":
     uvicorn.run("fast_api_app:app", host="0.0.0.0", port=5000, reload=True)
