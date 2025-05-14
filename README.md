@@ -59,39 +59,21 @@ GovStack is an intelligent document management and citizen assistance system des
 
 ### Running in Production Mode
 
-1. Start the ChromaDB server (first time setup):
-   ```bash
-   # Linux/macOS
-   ./start_chroma.sh
-   
-   # Windows
-   start_chroma.bat
-   ```
-
-2. Launch the full stack:
+1. Launch the full stack:
    ```bash
    docker compose up -d
    ```
 
-3. Access the API at http://localhost:5000
+2. Access the API at http://localhost:5000
 
 ### Running in Development Mode
 
-1. Set up the development environment:
-   ```bash
-   # Linux/macOS
-   ./start_chroma.sh --dev
-   
-   # Windows
-   start_chroma.bat --dev
-   ```
-
-2. Start the development stack:
+1. Start the development stack:
    ```bash
    docker compose -f docker-compose.dev.yml up -d
    ```
 
-3. Access the development API at http://localhost:5005
+2. Access the development API at http://localhost:5005
 
 ## Component Access
 
