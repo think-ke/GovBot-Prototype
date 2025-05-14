@@ -25,6 +25,7 @@ class Document(Base):
     description = Column(Text, nullable=True)
     is_public = Column(Boolean, default=False)
     meta_data = Column(JSON, nullable=True)  # Renamed from 'metadata' which is reserved
+    collection_id = Column(String(64), nullable=True, index=True)  # Identifier for collections
 
     def to_dict(self) -> Dict[str, Any]:
         """
@@ -41,4 +42,5 @@ class Document(Base):
             "description": self.description,
             "is_public": self.is_public,
             "metadata": self.meta_data,
+            "collection_id": self.collection_id,
         }
