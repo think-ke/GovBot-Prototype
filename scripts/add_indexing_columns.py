@@ -9,17 +9,12 @@ import asyncio
 import sys
 import os
 import logging
-from sqlalchemy import Column, Boolean, DateTime
+from sqlalchemy import Column, Boolean, DateTime, text
 from sqlalchemy.ext.asyncio import create_async_engine
-from alembic import command
-from alembic.config import Config
 from sqlalchemy.ext.declarative import declarative_base
 
 # Add project root to the Python path to allow imports
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-
-from app.db.models.webpage import Webpage
-from app.db.models.document import Base
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -40,13 +35,15 @@ async def add_columns():
     engine = create_async_engine(database_url, echo=True)
     
     async with engine.begin() as conn:
-        # Check if columns already exist
-        has_is_indexed = False
-        has_indexed_at = False
+        # Check if columns already exist using proper async query format
+        check_query = text("""
+            SELECT column_name FROM information_schema.columns 
+            WHERE table_name = 'webpages' AND column_name IN ('is_indexed', 'indexed_at')
+        """)
         
         try:
-            # Try to get column info
-            result = await conn.execute("SELECT column_name FROM information_schema.columns WHERE table_name = 'webpages' AND column_name IN ('is_indexed', 'indexed_at')")
+            # Execute the properly formatted query
+            result = await conn.execute(check_query)
             existing_columns = [row[0] for row in result.fetchall()]
             
             has_is_indexed = 'is_indexed' in existing_columns
@@ -62,12 +59,14 @@ async def add_columns():
         try:
             if not has_is_indexed:
                 logger.info("Adding is_indexed column...")
-                await conn.execute("ALTER TABLE webpages ADD COLUMN is_indexed BOOLEAN NOT NULL DEFAULT FALSE")
+                add_is_indexed = text("ALTER TABLE webpages ADD COLUMN is_indexed BOOLEAN NOT NULL DEFAULT FALSE")
+                await conn.execute(add_is_indexed)
                 logger.info("Added is_indexed column")
             
             if not has_indexed_at:
                 logger.info("Adding indexed_at column...")
-                await conn.execute("ALTER TABLE webpages ADD COLUMN indexed_at TIMESTAMP WITH TIME ZONE")
+                add_indexed_at = text("ALTER TABLE webpages ADD COLUMN indexed_at TIMESTAMP WITH TIME ZONE")
+                await conn.execute(add_indexed_at)
                 logger.info("Added indexed_at column")
             
             logger.info("Database update completed successfully")
