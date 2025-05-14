@@ -17,3 +17,6 @@ markdownify
 chardet
 llama_index
 python-multipart
+pysqlite3-binary
+pydantic-ai[logfire]
+llama-index-vector-stores-chroma
