@@ -119,15 +119,14 @@ class ChatPersistenceService:
                 # Process each part of the message
                 for part in parts:
                     part_kind = part.get("part_kind")
-                    
-                    # Create a new message record
+                      # Create a new message record
                     chat_message = ChatMessage(
                         chat_id=chat.id,
                         message_type=f"{kind}-{part_kind}" if part_kind else kind,
                         content=json.dumps(part),
                         model_name=message.get("model_name") if kind == "response" else None,
                         timestamp=datetime.fromisoformat(part.get("timestamp")) if part.get("timestamp") else datetime.now(timezone.utc),
-                        metadata={
+                        meta_data={
                             "usage": message.get("usage") if kind == "response" else None,
                             "instructions": message.get("instructions") if kind == "request" else None
                         },
@@ -191,16 +190,15 @@ class ChatPersistenceService:
                         "kind": msg.message_type.split('-')[0],
                         "parts": [],
                     }
-                    
-                    # Add message-level attributes
+                      # Add message-level attributes
                     if msg.model_name and current_msg["kind"] == "response":
                         current_msg["model_name"] = msg.model_name
                     
-                    if msg.metadata:
-                        if current_msg["kind"] == "response" and msg.metadata.get("usage"):
-                            current_msg["usage"] = msg.metadata["usage"]
-                        elif current_msg["kind"] == "request" and msg.metadata.get("instructions"):
-                            current_msg["instructions"] = msg.metadata["instructions"]
+                    if msg.meta_data:
+                        if current_msg["kind"] == "response" and msg.meta_data.get("usage"):
+                            current_msg["usage"] = msg.meta_data["usage"]
+                        elif current_msg["kind"] == "request" and msg.meta_data.get("instructions"):
+                            current_msg["instructions"] = msg.meta_data["instructions"]
                 
                 # Add the part to the current message
                 part_data = json.loads(msg.content)

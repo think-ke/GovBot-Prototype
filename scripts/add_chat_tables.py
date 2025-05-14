@@ -28,13 +28,13 @@ class Chat(Base):
     Model for tracking chat conversations.
     """
     __tablename__ = "chats"
-
+    
     id = Column(Integer, primary_key=True, index=True)
     session_id = Column(String(64), unique=True, nullable=False, index=True)
     user_id = Column(String(64), nullable=True, index=True)  # Optional user identification
     created_at = Column(DateTime(timezone=True))
     updated_at = Column(DateTime(timezone=True))
-    metadata = Column(JSON, nullable=True)  # For additional chat session metadata
+    meta_data = Column(JSON, nullable=True)  # For additional chat session metadata
 
 
 class ChatMessage(Base):
@@ -42,14 +42,14 @@ class ChatMessage(Base):
     Model for storing individual messages in a chat conversation.
     """
     __tablename__ = "chat_messages"
-
+    
     id = Column(Integer, primary_key=True, index=True)
     chat_id = Column(Integer, ForeignKey("chats.id"), nullable=False)
     message_type = Column(String(20), nullable=False)  # 'request', 'response', 'tool-call', 'tool-return', etc
     content = Column(Text, nullable=False)
     model_name = Column(String(64), nullable=True)
     timestamp = Column(DateTime(timezone=True))
-    metadata = Column(JSON, nullable=True)  # For additional message metadata, like tokens used
+    meta_data = Column(JSON, nullable=True)  # For additional message metadata, like tokens used
     message_idx = Column(Integer, nullable=False)  # Order of messages in the conversation
 
 

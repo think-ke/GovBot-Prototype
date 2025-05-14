@@ -41,6 +41,7 @@ class ChatHistoryResponse(BaseModel):
     user_id: Optional[str] = None
     created_at: datetime
     updated_at: datetime
+    message_count: int = 0
     num_messages: int  # Total number of messages
 
 
