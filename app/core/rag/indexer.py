@@ -199,56 +199,75 @@ async def get_collection_stats(
         logger.error(f"Error getting collection stats: {e}")
         raise
 
+if __name__ == "__main__":
 
+    from llama_index.core import Document
+    from llama_index.embeddings.openai import OpenAIEmbedding
+    from llama_index.core.node_parser import SentenceSplitter, MarkdownElementNodeParser
+    from llama_index.core.extractors import TitleExtractor
+    from llama_index.core.ingestion import IngestionPipeline, IngestionCache
 
-from llama_index.core import Document
-from llama_index.embeddings.openai import OpenAIEmbedding
-from llama_index.core.node_parser import SentenceSplitter, MarkdownElementNodeParser
-from llama_index.core.extractors import TitleExtractor
-from llama_index.core.ingestion import IngestionPipeline, IngestionCache
+    import chromadb
 
-import chromadb
+    from llama_index.core import VectorStoreIndex
+    from llama_index.vector_stores.chroma import ChromaVectorStore
 
-from llama_index.core import VectorStoreIndex
-from llama_index.vector_stores.chroma import ChromaVectorStore
+    from llama_index.core import StorageContext
 
-from llama_index.core import StorageContext
+    from dotenv import load_dotenv
+    import asyncio
+    import os
+    from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
+    from sqlalchemy.orm import sessionmaker
 
-remote_db = chromadb.HttpClient(
-    host="localhost",
-    port=8000
-)
+    load_dotenv()
 
-chroma_collection = remote_db.get_or_create_collection(
-    name="govstack"
-)
-
-vector_store = ChromaVectorStore(chroma_collection=chroma_collection)
-storage_context = StorageContext.from_defaults(vector_store=vector_store)
-
-# create the pipeline with transformations
-pipeline = IngestionPipeline(
-    transformations=[
-        SentenceSplitter(chunk_size=25, chunk_overlap=0),
-        TitleExtractor(),
-        OpenAIEmbedding(),
-    ],
-    vector_store=vector_store,
-)
-
-async def process_documents():
-    documents = await extract_texts_by_collection(
-        db=AsyncSession(),
-        collection_id="govstack",
-        hours_ago=24,
-        include_title=True,
-        include_url=True
+    # Database configuration
+    DATABASE_URL = os.getenv("DATABASE_URL", "postgresql+asyncpg://postgres:postgres@localhost/govstackdb")
+    engine = create_async_engine(DATABASE_URL, echo=False)
+    async_session_maker = sessionmaker(
+        engine, class_=AsyncSession, expire_on_commit=False
     )
 
-    # run the pipeline
-    nodes = pipeline.run(documents=documents)
-    
-    return VectorStoreIndex(nodes)
+    remote_db = chromadb.HttpClient(
+        host="localhost",
+        port=8050
+    )
 
-# Execute the async function
-index = process_documents()
+    chroma_collection = remote_db.get_or_create_collection(
+        name="govstack"
+    )
+
+    vector_store = ChromaVectorStore(chroma_collection=chroma_collection)
+    storage_context = StorageContext.from_defaults(vector_store=vector_store)
+
+    # create the pipeline with transformations
+    pipeline = IngestionPipeline(
+        transformations=[
+            SentenceSplitter(chunk_size=25, chunk_overlap=0),
+            TitleExtractor(),
+            OpenAIEmbedding(),
+        ],
+        vector_store=vector_store,
+    )
+
+    async def process_documents():
+        async with async_session_maker() as db:
+            documents = await extract_texts_by_collection(
+                db=db,
+                collection_id="govstack",
+                hours_ago=None,  # Get all documents
+                include_title=True,
+                include_url=True
+            )
+            
+            print(f"Extracted {len(documents)} documents for processing.")
+
+            # run the pipeline
+            nodes = pipeline.run(
+                documents=documents,
+                show_progress=True,)
+            
+            return VectorStoreIndex(nodes)
+
+    index = asyncio.run(process_documents())

@@ -15,6 +15,7 @@ from sqlalchemy.future import select
 import uvicorn
 from pydantic import BaseModel, HttpUrl, Field
 from typing import List, Optional, Dict, Any, Union
+from contextlib import asynccontextmanager
 
 from app.utils.storage import minio_client
 from app.db.models.document import Document, Base as DocumentBase
@@ -34,11 +35,31 @@ logger = logging.getLogger(__name__)
 logging.getLogger('sqlalchemy').setLevel(logging.WARNING)
 logging.getLogger('sqlalchemy.engine').setLevel(logging.WARNING)
 
+# Database configuration
+DATABASE_URL = os.getenv("DATABASE_URL", "postgresql+asyncpg://postgres:postgres@localhost/govstackdb")
+engine = create_async_engine(DATABASE_URL, echo=False)
+async_session = sessionmaker(
+    engine, class_=AsyncSession, expire_on_commit=False
+)
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Startup logic
+    logger.info("Starting up GovStack API")
+    async with engine.begin() as conn:
+        # Create tables if they don't exist
+        await conn.run_sync(DocumentBase.metadata.create_all)
+        await conn.run_sync(WebpageBase.metadata.create_all)
+    yield
+    # Shutdown logic
+    logger.info("Shutting down GovStack API")
+
 # Initialize FastAPI app
 app = FastAPI(
     title="GovStack API",
     description="GovStack Document Management API",
     version="0.1.0",
+    lifespan=lifespan  # Use the new lifespan manager
 )
 
 # Configure CORS
@@ -50,13 +71,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Database configuration
-DATABASE_URL = os.getenv("DATABASE_URL", "postgresql+asyncpg://postgres:postgres@localhost/govstackdb")
-engine = create_async_engine(DATABASE_URL, echo=False)
-async_session = sessionmaker(
-    engine, class_=AsyncSession, expire_on_commit=False
-)
-
 # Database dependency
 async def get_db():
     """Get database session."""
@@ -65,20 +79,6 @@ async def get_db():
         yield db
     finally:
         await db.close()
-
-@app.on_event("startup")
-async def startup():
-    """Application startup: initialize database tables if needed."""
-    logger.info("Starting up GovStack API")
-    async with engine.begin() as conn:
-        # Create tables if they don't exist
-        await conn.run_sync(DocumentBase.metadata.create_all)
-        await conn.run_sync(WebpageBase.metadata.create_all)
-
-@app.on_event("shutdown")
-async def shutdown():
-    """Application shutdown: close resources."""
-    logger.info("Shutting down GovStack API")
 
 @app.get("/")
 async def root():
@@ -96,6 +96,7 @@ async def upload_document(
     file: UploadFile = File(...),
     description: str = Form(None),
     is_public: bool = Form(False),
+    collection_id: Optional[str] = Form(None),  # Add collection_id parameter
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -105,6 +106,7 @@ async def upload_document(
         file: The file to upload
         description: Optional description of the document
         is_public: Whether the document should be publicly accessible
+        collection_id: Identifier for grouping documents
         db: Database session
         
     Returns:
@@ -119,11 +121,17 @@ async def upload_document(
         file_content = await file.read()
         file_size = len(file_content)
         
+        # Prepare MinIO metadata
+        minio_metadata = None
+        if collection_id:
+            minio_metadata = {"collection_id": collection_id}
+        
         # Upload to MinIO
         minio_client.upload_file(
             file_obj=file_content,
             object_name=object_name,
-            content_type=file.content_type or "application/octet-stream"
+            content_type=file.content_type or "application/octet-stream",
+            metadata=minio_metadata  # Pass metadata here
         )
         
         # Create document record
@@ -134,7 +142,8 @@ async def upload_document(
             size=file_size,
             description=description,
             is_public=is_public,
-            metadata={"original_filename": file.filename}
+            metadata={"original_filename": file.filename},
+            collection_id=collection_id  # Pass collection_id to Document constructor
         )
         
         db.add(document)
@@ -397,7 +406,8 @@ async def start_crawl(
             status=crawl_tasks[task_id]["status"],
             seed_urls=crawl_tasks[task_id]["seed_urls"],
             start_time=crawl_tasks[task_id]["start_time"],
-            finished=False
+            finished=False,
+            collection_id=request.collection_id  # Add this line to include collection_id in the response
         )
         
     except Exception as e:
@@ -438,7 +448,8 @@ async def get_crawl_status(task_id: str):
         total_urls_queued=task_status.get("total_urls_queued"),
         errors=task_status.get("errors"),
         start_time=task_status.get("start_time"),
-        finished=task_status.get("finished", False)
+        finished=task_status.get("finished", False),
+        collection_id=task_status.get("collection_id")  # Add this line to include collection_id in the response
     )
 
 @app.post("/fetch-webpage/", response_model=WebpageFetchResponse)
