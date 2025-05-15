@@ -365,10 +365,10 @@ class WebCrawler:
             
             if not webpage:                
                 logger.info(f"No existing webpage found for URL: {url}. Creating new record at depth {depth}")                
+                # Remove the is_seed parameter as it's not supported by the Webpage model
                 webpage = Webpage(
                     url=url,
                     crawl_depth=depth,
-                    is_seed=is_seed,
                     first_crawled=datetime.now(timezone.utc),
                     collection_id=self.collection_id
                 )
