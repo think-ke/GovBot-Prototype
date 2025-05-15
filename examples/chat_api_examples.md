@@ -2,13 +2,10 @@
 
 This document provides examples of how to use the GovStack Chat API endpoints.
 
-## Chat API Endpoints
+## Chat API Endpoint
 
-The Chat API endpoints are available at:
-- `/chat` (primary endpoint)
-- `/v2/chat` (compatibility endpoint)
-
-Both endpoints provide the same functionality with the same interface.
+The Chat API endpoint is available at:
+- `/chat`
 
 ## Starting a New Conversation
 
