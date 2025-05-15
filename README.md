@@ -75,6 +75,12 @@ GovStack is an intelligent document management and citizen assistance system des
 
 2. Access the development API at http://localhost:5005
 
+## System Architecture
+
+<iframe src="https://app.eraser.io/workspace/JxI0qDfxxU7BF0aRxjqk/preview?elements=7v0nc64pjZXHYe_DV-yt3g&type=embed" width="100%" height="500px" frameborder="0" allowfullscreen></iframe>
+
+This diagram illustrates the core components and data flow of the GovStack system. For a more detailed architectural explanation, see the [Technical Design Document](./docs/technical_design.md).
+
 ## Component Access
 
 - **API Server**: 
