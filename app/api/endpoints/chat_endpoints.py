@@ -97,10 +97,10 @@ async def process_chat(
         # Process the message with history if available
         if message_history:
             logger.info(f"[{trace_id}] Processing message with history for session: {session_id}")
-            result = agent.run_sync(request.message, message_history=message_history)
+            result = await agent.run(request.message, message_history=message_history)
         else:
             logger.info(f"[{trace_id}] Processing message without history for session: {session_id}")
-            result = agent.run_sync(request.message)
+            result = await agent.run(request.message)
         
         processing_time = (datetime.now() - start_time).total_seconds()
         logger.info(f"[{trace_id}] Processed message in {processing_time:.2f} seconds")
