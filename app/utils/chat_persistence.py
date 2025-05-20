@@ -1,9 +1,7 @@
 """
 Chat persistence service for storing and retrieving chat history.
 """
-
 import logging
-import json
 from datetime import datetime, timezone
 from typing import Dict, List, Optional, Any, Union
 from sqlalchemy import select, update, and_
@@ -78,34 +76,6 @@ class ChatPersistenceService:
         return session_id
 
     @staticmethod
-    async def create_chat_session_with_id(db: AsyncSession, session_id: str, user_id: Optional[str] = None) -> str:
-        """
-        Create a new chat session with a specific session ID.
-        
-        Args:
-            db: Database session
-            session_id: The session ID to use
-            user_id: Optional user identifier
-            
-        Returns:
-            The session ID that was provided
-        """
-        # Create chat record with the provided session ID
-        chat = Chat(
-            session_id=session_id,
-            user_id=user_id,
-            created_at=datetime.now(timezone.utc),
-            updated_at=datetime.now(timezone.utc)
-        )
-        
-        db.add(chat)
-        await db.commit()
-        await db.refresh(chat)
-        
-        logger.info(f"Created new chat session with provided ID: {session_id}")
-        return session_id
-
-    @staticmethod
     async def get_chat_by_session_id(db: AsyncSession, session_id: str) -> Optional[Chat]:
         """
         Retrieve a chat by its session ID.
@@ -124,20 +94,23 @@ class ChatPersistenceService:
         return chat
 
     @staticmethod
-    async def save_messages(
-        db: AsyncSession, 
-        session_id: str, 
-        messages: List[Any],
-        append: bool = True
+    async def save_message(
+        db: AsyncSession,
+        session_id: str,
+        message_type: str,
+        message_object: Dict[str, Any],
+        history: Optional[List[Any]] = None
     ) -> bool:
         """
-        Save messages for a chat session.
+        Save a single message for a chat session.
         
         Args:
             db: Database session
-            session_id: The session ID to save messages for
-            messages: List of ModelMessage objects from pydantic_ai
-            append: Whether to append to existing messages or replace them
+            session_id: The session ID to save the message for
+            message_type: Type of message ('user' or 'assistant')
+            message_object: Dictionary containing the message content
+            history: Optional raw message history from the agent (only for assistant messages)
+                     This should be the result of to_jsonable_python(result.all_messages())
             
         Returns:
             True if successful, False otherwise
@@ -149,73 +122,69 @@ class ChatPersistenceService:
                 logger.error(f"Chat session {session_id} not found")
                 return False
             
-            # If not appending, delete existing messages
-            if not append:
-                query = select(ChatMessage).where(ChatMessage.chat_id == chat.id)
-                result = await db.execute(query)
-                existing_messages = result.scalars().all()
-                for message in existing_messages:
-                    await db.delete(message)
+            # Create message
+            message = ChatMessage(
+                chat_id=chat.id,
+                message_id=str(uuid4()),
+                message_type=message_type,
+                message_object=message_object,
+                history=history,
+                timestamp=datetime.now(timezone.utc)
+            )
             
-            # Get the current max message_idx
-            query = select(ChatMessage).where(ChatMessage.chat_id == chat.id).order_by(ChatMessage.message_idx.desc())
-            result = await db.execute(query)
-            last_message = result.scalars().first()
-            next_idx = (last_message.message_idx + 1) if last_message else 0
-            
-            # Convert PydanticAI messages to serializable format
-            serializable_messages = to_jsonable_python(messages)
-            
-            # Store each message
-            for msg_idx, message in enumerate(serializable_messages, start=next_idx):
-                kind = message.get("kind")
-                parts = message.get("parts", [])
-                
-                # Process each part of the message
-                for part in parts:
-                    part_kind = part.get("part_kind")
-                      # Create a new message record
-                    chat_message = ChatMessage(
-                        chat_id=chat.id,
-                        message_type=f"{kind}-{part_kind}" if part_kind else kind,
-                        content=json.dumps(part),
-                        model_name=message.get("model_name") if kind == "response" else None,
-                        timestamp=datetime.fromisoformat(part.get("timestamp")) if part.get("timestamp") else datetime.now(timezone.utc),
-                        meta_data={
-                            "usage": message.get("usage") if kind == "response" else None,
-                            "instructions": message.get("instructions") if kind == "request" else None
-                        },
-                        message_idx=msg_idx
-                    )
-                    
-                    db.add(chat_message)
+            db.add(message)
             
             # Update the chat's updated_at timestamp
             chat.updated_at = datetime.now(timezone.utc)
             
             await db.commit()
-            logger.info(f"Saved {len(serializable_messages)} messages for chat session {session_id}")
+            logger.info(f"Saved {message_type} message for chat session {session_id}")
             return True
             
         except Exception as e:
-            logger.error(f"Error saving messages: {str(e)}")
+            logger.error(f"Error saving message: {str(e)}")
             await db.rollback()
-            return False    
+            return False
+    
     @staticmethod
-    async def load_messages(db: AsyncSession, session_id: str) -> Optional[List]:
+    async def load_history(db: AsyncSession, session_id: str) -> Optional[List]:
         """
-        This method has been disabled to prevent loading message history.
-        It now returns None to ensure no message history is loaded.
+        Load message history for a chat session.
         
         Args:
             db: Database session
             session_id: The session ID to load messages for
             
         Returns:
-            None - message history loading is disabled
+            List of model messages if found and valid, None otherwise
         """
-        logger.info(f"Message history loading has been disabled for session: {session_id}")
-        return None
+        try:
+            chat = await ChatPersistenceService.get_chat_by_session_id(db, session_id)
+            if not chat:
+                logger.warning(f"Chat session {session_id} not found when loading history")
+                return None
+            
+            # Get the most recent assistant message with history
+            query = select(ChatMessage).where(
+                (ChatMessage.chat_id == chat.id) & 
+                (ChatMessage.message_type == 'assistant') & 
+                (ChatMessage.history.isnot(None))
+            ).order_by(ChatMessage.timestamp.desc())
+            
+            result = await db.execute(query)
+            message = result.scalars().first()
+            
+            if message and message.history:
+                logger.info(f"Found message history for session {session_id}")
+                # Convert history back to ModelMessage format using ModelMessagesTypeAdapter
+                return ModelMessagesTypeAdapter.validate_python(message.history)
+            
+            logger.info(f"No message history found for session {session_id}")
+            return None
+            
+        except Exception as e:
+            logger.error(f"Error loading message history: {str(e)}")
+            return None
     @staticmethod
     async def delete_chat_session(db: AsyncSession, session_id: str) -> bool:
         """

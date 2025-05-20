@@ -7,10 +7,9 @@ from pydantic import BaseModel, Field
 from typing import Optional, List, Dict, Any, Union
 from datetime import datetime
 import logging
-import json
 import uuid
-import traceback
-from pydantic_ai.messages import ModelMessage
+from pydantic_core import to_jsonable_python
+from pydantic_ai.messages import ModelMessagesTypeAdapter
 
 from app.db.database import get_db
 from app.utils.chat_persistence import ChatPersistenceService
@@ -73,7 +72,7 @@ async def process_chat(
         session_id = await ChatPersistenceService.create_chat_session(db, request.user_id)
     else:
         logger.info(f"[{trace_id}] Using existing session ID: {session_id}")
-        # Check if the chat session exists but don't load message history
+        # Check if the chat session exists
         chat = await ChatPersistenceService.get_chat_by_session_id(db, session_id)
         if not chat:
             logger.warning(f"[{trace_id}] Chat session {session_id} not found, creating new session")
@@ -82,17 +81,50 @@ async def process_chat(
     try:
         start_time = datetime.now()
         
-        # Always start a new conversation without message history
+        # Create agent and load message history if available
         agent = generate_agent()
+        message_history = await ChatPersistenceService.load_history(db, session_id)
         
-        # Process the message - always treat as a new conversation
-        result = agent.run_sync(request.message)
+        # Save the user message first
+        user_message_obj = {"query": request.message}
+        await ChatPersistenceService.save_message(
+            db, 
+            session_id, 
+            "user", 
+            user_message_obj
+        )
+        
+        # Process the message with history if available
+        if message_history:
+            logger.info(f"[{trace_id}] Processing message with history for session: {session_id}")
+            result = agent.run_sync(request.message, message_history=message_history)
+        else:
+            logger.info(f"[{trace_id}] Processing message without history for session: {session_id}")
+            result = agent.run_sync(request.message)
+        
         processing_time = (datetime.now() - start_time).total_seconds()
-        
         logger.info(f"[{trace_id}] Processed message in {processing_time:.2f} seconds")
         
-        # Save only the current message to the database
-        success = await ChatPersistenceService.save_messages(db, session_id, result.all_messages())
+        # Create assistant message object
+        assistant_message_obj = {
+            "session_id": session_id,
+            "answer": result.output.answer,
+            "sources": result.output.sources,
+            "confidence": result.output.confidence,
+            "retriever_type": result.output.retriever_type,
+            "trace_id": trace_id
+        }
+        
+        # Save the assistant message with history
+        history = result.all_messages()
+        history_as_python = to_jsonable_python(history)
+        success = await ChatPersistenceService.save_message(
+            db, 
+            session_id, 
+            "assistant", 
+            assistant_message_obj,
+            history=history_as_python
+        )
             
         if not success:
             logger.error(f"[{trace_id}] Failed to save chat messages for session: {session_id}")
@@ -143,22 +175,12 @@ async def get_chat_history(
         # Get all messages for this chat
         messages = []
         for msg in chat.messages:
-            # Ensure content is valid JSON
-            try:
-                content = json.loads(msg.content)
-            except json.JSONDecodeError:
-                content = {"text": msg.content}
-            
-            # Format timestamp as ISO string if it exists
-            timestamp = msg.timestamp.isoformat() if msg.timestamp else None
-            
             messages.append({
                 "id": msg.id,
+                "message_id": msg.message_id,
                 "message_type": msg.message_type,
-                "content": content,
-                "timestamp": timestamp,
-                "metadata": msg.metadata,
-                "message_idx": msg.message_idx
+                "message_object": msg.message_object,
+                "timestamp": msg.timestamp.isoformat() if msg.timestamp else None,
             })
         
         # Return the chat history
@@ -168,6 +190,7 @@ async def get_chat_history(
             user_id=chat.user_id,
             created_at=chat.created_at,
             updated_at=chat.updated_at,
+            message_count=len(messages),
             num_messages=len(messages)
         )
     

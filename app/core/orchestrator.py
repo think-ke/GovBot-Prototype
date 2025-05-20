@@ -6,7 +6,8 @@ from llama_index.llms.openai import OpenAI
 from llama_index.embeddings.openai import OpenAIEmbedding
 from pydantic import BaseModel
 from typing import List, Optional, Any
-from pydantic_ai.messages import ModelMessage
+from pydantic_ai.messages import ModelMessage, ModelMessagesTypeAdapter
+from pydantic_core import to_jsonable_python
 
 Settings.llm = OpenAI(
     model="gpt-4o",
@@ -47,19 +48,41 @@ if __name__ == "__main__":
     # Example usage
     agent = generate_agent()
 
-    # Run the agent with a sample query using a synchronous method
-    result = agent.run_sync(
+    # Example 1: Starting a new conversation
+    result1 = agent.run_sync(
         "What is the role of the Kenya Film Commission in the film industry?"
     )
-    print(result.output)
-
-    # Run the agent with a sample query using an asynchronous method
-    # result = await agent.run(
-    #     "What is the role of the Kenya Film Commission in the film industry?",
-    #     chat_history=[],
-    # )
-
-    # The output will be an instance of the Output model
+    print("First response:", result1.output.answer)
+    
+    # Save message history after the first exchange
+    history_step_1 = result1.all_messages()
+    
+    # Convert the history to serializable Python objects
+    history_as_python_objects = to_jsonable_python(history_step_1)
+    
+    # In a real app, you would store history_as_python_objects in the database
+    # Then when continuing the conversation, you would:
+    
+    # 1. Load the serialized history from the database
+    # 2. Convert it back to ModelMessage objects using ModelMessagesTypeAdapter
+    same_history_as_step_1 = ModelMessagesTypeAdapter.validate_python(history_as_python_objects)
+    
+    # 3. Use the history when running the agent for the follow-up message
+    result2 = agent.run_sync(
+        "Tell me more about its support for filmmakers.",
+        message_history=same_history_as_step_1
+    )
+    
+    print("\nFollow-up response (with history):", result2.output.answer)
+    
+    # Compare with a response without history context
+    result3 = agent.run_sync(
+        "Tell me more about its support for filmmakers."
+    )
+    
+    print("\nSame question without history:", result3.output.answer)
+    
+    # The output with history should be more contextually appropriate
 
 
 
