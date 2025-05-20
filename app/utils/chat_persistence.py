@@ -204,73 +204,18 @@ class ChatPersistenceService:
     @staticmethod
     async def load_messages(db: AsyncSession, session_id: str) -> Optional[List]:
         """
-        Load messages for a chat session.
+        This method has been disabled to prevent loading message history.
+        It now returns None to ensure no message history is loaded.
         
         Args:
             db: Database session
             session_id: The session ID to load messages for
             
         Returns:
-            List of ModelMessage objects if successful, None otherwise
+            None - message history loading is disabled
         """
-        try:
-            # Get the chat
-            chat = await ChatPersistenceService.get_chat_by_session_id(db, session_id)
-            if not chat:
-                logger.error(f"Chat session {session_id} not found")
-                return None
-                
-            # Check if there are any messages
-            if not chat.messages or len(chat.messages) == 0:
-                logger.warning(f"Chat session {session_id} exists but has no messages")
-                return None
-            
-            # Query all messages for this chat, ordered by message_idx
-            query = select(ChatMessage).where(ChatMessage.chat_id == chat.id).order_by(ChatMessage.message_idx)
-            result = await db.execute(query)
-            messages = result.scalars().all()
-            
-            # Reconstruct the model messages
-            reconstructed_messages = []
-            current_msg = None
-            current_idx = -1
-            
-            for msg in messages:
-                if msg.message_idx != current_idx:
-                    # Start a new message
-                    if current_msg:
-                        reconstructed_messages.append(current_msg)
-                    
-                    current_idx = msg.message_idx
-                    current_msg = {
-                        "kind": msg.message_type.split('-')[0],
-                        "parts": [],
-                    }
-                      # Add message-level attributes
-                    if msg.model_name and current_msg["kind"] == "response":
-                        current_msg["model_name"] = msg.model_name
-                    
-                    if msg.meta_data:
-                        if current_msg["kind"] == "response" and msg.meta_data.get("usage"):
-                            current_msg["usage"] = msg.meta_data["usage"]
-                        elif current_msg["kind"] == "request" and msg.meta_data.get("instructions"):
-                            current_msg["instructions"] = msg.meta_data["instructions"]
-                
-                # Add the part to the current message
-                part_data = json.loads(msg.content)
-                current_msg["parts"].append(part_data)
-            
-            # Add the last message if it exists
-            if current_msg:
-                reconstructed_messages.append(current_msg)
-            
-            # Validate and convert back to ModelMessage objects
-            return ModelMessagesTypeAdapter.validate_python(reconstructed_messages)
-            
-        except Exception as e:
-            logger.error(f"Error loading messages: {str(e)}")
-            return None
-
+        logger.info(f"Message history loading has been disabled for session: {session_id}")
+        return None
     @staticmethod
     async def delete_chat_session(db: AsyncSession, session_id: str) -> bool:
         """

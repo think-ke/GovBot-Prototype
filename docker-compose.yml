@@ -35,7 +35,7 @@ services:
       - minio
 
   postgres:
-    image: postgres:latest
+    image: postgres:17.5
     environment:
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-postgres}
       - POSTGRES_USER=postgres
@@ -53,7 +53,7 @@ services:
       retries: 5
 
   chroma:
-    image: chromadb/chroma:latest
+    image: chromadb/chroma:1.0.10.dev32
     ports:
       - "8050:8000"  # Map host port 8050 to container port 8000
     environment:
@@ -71,7 +71,7 @@ services:
       - govstack-net
 
   minio:
-    image: minio/minio:latest
+    image: minio/minio:RELEASE.2025-04-22T22-12-26Z-cpuv1
     volumes:
       - ./data/minio:/data
     ports:

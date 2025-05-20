@@ -2,6 +2,10 @@
 FastAPI application for the GovStack service.
 """
 
+from dotenv import load_dotenv
+load_dotenv()
+
+
 import os
 import logging
 from fastapi import FastAPI, Depends, HTTPException, UploadFile, File, Form, BackgroundTasks, Query, APIRouter
@@ -26,6 +30,7 @@ from app.core.crawlers.utils import get_page_as_markdown
 from app.core.rag.indexer import extract_text_batch, get_collection_stats, start_background_indexing
 from app.core.orchestrator import generate_agent
 
+
 # Configure logging
 logging.basicConfig(
     level=os.getenv("LOG_LEVEL", "INFO"),
@@ -38,11 +43,7 @@ logging.getLogger('sqlalchemy').setLevel(logging.WARNING)
 logging.getLogger('sqlalchemy.engine').setLevel(logging.WARNING)
 
 # Database configuration
-DATABASE_URL = os.getenv("DATABASE_URL", "postgresql+asyncpg://postgres:postgres@localhost/govstackdb")
-engine = create_async_engine(DATABASE_URL, echo=False)
-async_session = sessionmaker(
-    engine, class_=AsyncSession, expire_on_commit=False
-)
+from app.db.database import get_db, engine, async_session
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -75,13 +76,7 @@ app.add_middleware(
 )
 
 # Database dependency
-async def get_db():
-    """Get database session."""
-    db = async_session()
-    try:
-        yield db
-    finally:
-        await db.close()
+# Using get_db from app.db.database
 
 # Create APIRouters for different endpoint categories
 core_router = APIRouter(
@@ -785,15 +780,25 @@ if __name__ == "__main__":
     # Check if we should use uvloop
     use_uvloop = os.getenv("USE_UVLOOP", "false").lower() == "true"
     
+    # Define directories to watch (exclude data directory)
+    watch_dirs = ["app"]
+    
     if use_uvloop:
-        uvicorn.run("fast_api_app:app", host="0.0.0.0", port=5000, reload=True)
+        uvicorn.run(
+            "app.api.fast_api_app:app", 
+            host="0.0.0.0", 
+            port=5000, 
+            reload=True, 
+            reload_dirs=watch_dirs
+        )
     else:
         # Disable uvloop when running directly
         uvicorn.run(
-            "fast_api_app:app", 
+            "app.api.fast_api_app:app", 
             host="0.0.0.0", 
             port=5000, 
             reload=True,
             loop="asyncio",  # Use standard asyncio instead of uvloop
-            http="httptools"  # Use httptools to maintain performance
+            http="httptools",  # Use httptools to maintain performance
+            reload_dirs=watch_dirs
         )

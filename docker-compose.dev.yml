@@ -33,7 +33,7 @@ services:
     restart: unless-stopped
 
   postgres-dev:
-    image: postgres:latest
+    image: postgres:17.5
     ports:
       - "5433:5432"
     environment:
@@ -51,7 +51,7 @@ services:
       retries: 5
 
   chroma-dev:
-    image: chromadb/chroma:latest
+    image: chromadb/chroma:1.0.10.dev32
     volumes:
       - ./data/chroma-dev:/chroma/chroma
       - ./server.htpasswd:/chroma/server.htpasswd:ro

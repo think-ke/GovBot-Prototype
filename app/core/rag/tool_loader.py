@@ -3,6 +3,17 @@ import os
 from app.utils.prompts import QUERY_ENGINE_PROMPT
 from llama_index.core import VectorStoreIndex, StorageContext
 from llama_index.vector_stores.chroma import ChromaVectorStore
+from chromadb.config import Settings
+
+## add logging
+import logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+from dotenv import load_dotenv
+# Load environment variables from .env file
+
+load_dotenv()
 
 
 collection_dict = {
@@ -12,9 +23,15 @@ collection_dict = {
     }
 }
 
+
+logger.info("Loading ChromaDB client")
+# Initialize the ChromaDB client
 remote_db = chromadb.HttpClient(
     host=os.getenv("CHROMA_HOST", "localhost"),
-    port=int(os.getenv("CHROMA_PORT", "8050"))
+    port=int(os.getenv("CHROMA_PORT", "8050")),
+  settings=Settings(
+      chroma_client_auth_provider="chromadb.auth.basic_authn.BasicAuthClientProvider",
+      chroma_client_auth_credentials=f"{os.getenv('CHROMA_USERNAME')}:{os.getenv('CHROMA_PASSWORD')}")
 )
 
 retrievers = []

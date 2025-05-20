@@ -12,7 +12,7 @@ import uuid
 import traceback
 from pydantic_ai.messages import ModelMessage
 
-from app.api.fast_api_app import get_db
+from app.db.database import get_db
 from app.utils.chat_persistence import ChatPersistenceService
 from app.core.orchestrator import generate_agent, Output
 
@@ -71,50 +71,28 @@ async def process_chat(
         logger.info(f"[{trace_id}] Creating new chat session for user: {request.user_id}")
         # Create a new chat session
         session_id = await ChatPersistenceService.create_chat_session(db, request.user_id)
-        message_history = None
     else:
-        logger.info(f"[{trace_id}] Continuing chat session: {session_id}")
-        # Check if the chat session exists
+        logger.info(f"[{trace_id}] Using existing session ID: {session_id}")
+        # Check if the chat session exists but don't load message history
         chat = await ChatPersistenceService.get_chat_by_session_id(db, session_id)
         if not chat:
-            # If provided session_id doesn't exist, create it instead of failing
             logger.warning(f"[{trace_id}] Chat session {session_id} not found, creating new session")
-            chat = await ChatPersistenceService.create_chat_session_with_id(db, session_id, request.user_id)
-            message_history = None
-        else:
-            # Load the previous messages
-            message_history = await ChatPersistenceService.load_messages(db, session_id)
+            await ChatPersistenceService.create_chat_session_with_id(db, session_id, request.user_id)
     
     try:
         start_time = datetime.now()
         
-        if not message_history:
-            # If no messages found or new session, start a new conversation
-            agent = generate_agent()
-        else:
-            # Continue the conversation with previous context
-            logger.info(f"[{trace_id}] Loaded {len(message_history)} previous messages")
-            
-            # Truncate history if it's getting too long (to avoid token limits)
-            if len(message_history) > 20:
-                logger.info(f"[{trace_id}] Truncating message history from {len(message_history)} to 20 messages")
-                from app.core.orchestrator import truncate_message_history
-                message_history = truncate_message_history(message_history, 20)
-            
-            agent = generate_agent(message_history=message_history)
+        # Always start a new conversation without message history
+        agent = generate_agent()
         
-        # Process the message
+        # Process the message - always treat as a new conversation
         result = agent.run_sync(request.message)
         processing_time = (datetime.now() - start_time).total_seconds()
         
         logger.info(f"[{trace_id}] Processed message in {processing_time:.2f} seconds")
         
-        # Save the messages to the database
-        if is_new_session:
-            success = await ChatPersistenceService.save_messages(db, session_id, result.all_messages())
-        else:
-            # Only save new messages for existing sessions to avoid duplication
-            success = await ChatPersistenceService.save_messages(db, session_id, result.new_messages())
+        # Save only the current message to the database
+        success = await ChatPersistenceService.save_messages(db, session_id, result.all_messages())
             
         if not success:
             logger.error(f"[{trace_id}] Failed to save chat messages for session: {session_id}")
