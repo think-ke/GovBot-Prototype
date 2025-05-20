@@ -52,7 +52,12 @@ GovStack is an AI-powered eCitizen services agent designed to provide assistance
    - Function Calling Agents: Integrates with external APIs
    - Agent Orchestration: Coordinates multiple specialized agents
 
-6. **User Interface**
+6. **Conversation Management**
+   - Chat Persistence: Stores and retrieves conversation history
+   - Session Management: Maintains context across interactions
+   - Message History: Serializes and deserializes agent messages
+
+7. **User Interface**
    - Web Interface: Primary access point
    - Mobile Interface: Optimized for mobile devices
    - Potential USSD Interface: For feature phone access
@@ -62,7 +67,8 @@ GovStack is an AI-powered eCitizen services agent designed to provide assistance
 ### Data Storage
 - **PostgreSQL**: Relational database for structured data
   - Stores metadata about documents and webpages
-  - Manages chat history and user data
+  - Manages chat sessions, messages, and history
+  - Stores serialized agent message history
   - Tracks indexing status
   
 - **ChromaDB**: Vector database for semantic search
@@ -89,7 +95,8 @@ GovStack is an AI-powered eCitizen services agent designed to provide assistance
 - **PydanticAI**: Agent framework
   - Structured agent interactions
   - Type-safe function calling
-  - Message history management
+  - Message history management with persistence
+  - Conversation session tracking
   
 - **OpenAI/Llama 3.3/Qwen2.5**: Large Language Models
   - Response generation

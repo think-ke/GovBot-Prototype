@@ -4,12 +4,12 @@ GovStack is an intelligent document management and citizen assistance system des
 
 ## Features
 
-- AI-powered assistance for eCitizen services in Kenya
+- AI-powered assistance for eCitizen services in Kenya using PydanticAI agents
 - RAG (Retrieval Augmented Generation) capabilities for accurate information retrieval
 - Document upload, storage, and retrieval with semantic search
 - Web crawling capabilities for automatic information gathering
 - Collection-based organization of documents and web content
-- Secure authentication and authorization
+- Conversation history persistence with the ability to continue conversations
 - MinIO integration for scalable object storage
 - ChromaDB for vector database capabilities
 - PostgreSQL for relational data storage
@@ -306,9 +306,12 @@ govstack/
 - **Orchestrator**: Manages AI agent interactions in `app/core/orchestrator.py`
 - **Web Crawler**: Handles web content retrieval in `app/core/crawlers/web_crawler.py`
 - **RAG System**: Manages vector indexing in `app/core/rag/indexer.py`
+- **Chat System**: Processes conversations and maintains context in `app/api/endpoints/chat_endpoints.py`
+- **Chat Persistence**: Stores and retrieves chat history in `app/utils/chat_persistence.py`
 - **Database Models**: 
   - `app/db/models/webpage.py`: Stores crawled web content
   - `app/db/models/document.py`: Stores uploaded documents
+  - `app/db/models/chat.py`: Stores chat sessions and message history
 
 ## Troubleshooting
 
