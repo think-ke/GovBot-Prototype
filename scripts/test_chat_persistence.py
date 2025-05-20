@@ -68,7 +68,12 @@ async def test_chat_persistence():
         # Step 2: Continue the conversation with a follow-up question
         logger.info("Step 2: Loading previous messages and sending follow-up")
         
-        # Load the previous messages
+        # Load the previous messages - use the new method to properly handle relationships
+        chat_with_messages = await ChatPersistenceService.get_chat_with_messages(db, session_id)
+        if not chat_with_messages:
+            logger.error("Failed to load message history")
+            return
+            
         message_history = await ChatPersistenceService.load_messages(db, session_id)
         if not message_history:
             logger.error("Failed to load message history")

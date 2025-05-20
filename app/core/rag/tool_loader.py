@@ -20,6 +20,10 @@ collection_dict = {
     "kfc":{
         "collection_name": "Kenya Film Commission",
         "collection_description": "Kenya Film Commission is a government agency responsible for promoting and facilitating the growth of the film industry in Kenya. It provides support to filmmakers, promotes Kenya as a filming destination, and works to develop local talent and infrastructure.",
+    },
+    "kfcb":{
+        "collection_name": "Kenya Film Classification Board",
+        "collection_description": "The Kenya Film Classification Board (KFCB) is a government agency responsible for regulating the film and broadcast industry in Kenya. It ensures that films and broadcasts comply with the law, promotes local content, and protects children from harmful content.",
     }
 }
 
