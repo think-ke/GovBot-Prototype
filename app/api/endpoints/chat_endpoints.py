@@ -166,16 +166,19 @@ async def get_chat_history(
     logger.info(f"[{trace_id}] Retrieving chat history for session: {session_id}")
     
     try:
-        # Get the chat session
-        chat = await ChatPersistenceService.get_chat_by_session_id(db, session_id)
-        if not chat:
+        # Get the chat session with properly loaded messages
+        chat_with_messages = await ChatPersistenceService.get_chat_with_messages(db, session_id)
+        if not chat_with_messages:
             logger.warning(f"[{trace_id}] Chat session {session_id} not found")
             raise HTTPException(status_code=404, detail=f"Chat session {session_id} not found")
         
-        # Get all messages for this chat
-        messages = []
-        for msg in chat.messages:
-            messages.append({
+        chat = chat_with_messages["chat"]
+        messages = chat_with_messages["messages"]
+        
+        # Format messages for response
+        formatted_messages = []
+        for msg in messages:
+            formatted_messages.append({
                 "id": msg.id,
                 "message_id": msg.message_id,
                 "message_type": msg.message_type,
@@ -186,12 +189,12 @@ async def get_chat_history(
         # Return the chat history
         return ChatHistoryResponse(
             session_id=session_id,
-            messages=messages,
+            messages=formatted_messages,
             user_id=chat.user_id,
             created_at=chat.created_at,
             updated_at=chat.updated_at,
-            message_count=len(messages),
-            num_messages=len(messages)
+            message_count=len(formatted_messages),
+            num_messages=len(formatted_messages)
         )
     
     except HTTPException:

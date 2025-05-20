@@ -202,7 +202,7 @@ async def get_collection_stats(
                     stats["indexed_count"] = index_stats.indexed_count or 0
                     stats["unindexed_count"] = index_stats.unindexed_count or 0
                     if (stats["indexed_count"] + stats["unindexed_count"]) > 0:
-                        stats["indexing_progress"] = f"{(stats['indexed_count'] / (stats['indexed_count'] + stats['unindexed_count']) * 100):.1f}%"
+                        stats["indexing_progress"] = f"{(stats['indexed_count'] / (stats['indexed_count'] + stats['unindexed_count']) * 20):.1f}%"
             
             return stats
         else:
@@ -370,7 +370,7 @@ async def mark_documents_as_indexed(
         now = datetime.now(timezone.utc)
         
         # Update documents in batches to avoid memory issues with large sets
-        batch_size = 100
+        batch_size = 20
         for i in range(0, len(document_ids), batch_size):
             batch_ids = document_ids[i:i+batch_size]
             
@@ -421,7 +421,7 @@ async def setup_vector_store(collection_name: str):
         # Create the pipeline with transformations
         pipeline = IngestionPipeline(
             transformations=[
-                SentenceSplitter(chunk_size=1024, chunk_overlap=200),
+                SentenceSplitter(chunk_size=1024, chunk_overlap=50),
                 OpenAIEmbedding(
                     model="text-embedding-3-small",
                     chunk_size=64,
@@ -473,37 +473,53 @@ async def index_documents_by_collection(collection_id: str) -> Dict[str, Any]:
             # Set up vector store
             vector_store, pipeline = await setup_vector_store(collection_id)
             
-            # Convert dictionary documents to Document objects
-            doc_objects = [
-                Document(
-                    text=doc.get("content", ""),
-                    metadata={
-                        "title": doc.get("title", ""),
-                        "url": doc.get("url", ""),
-                        "doc_id": doc.get("id", ""),
-                        "last_crawled": doc.get("last_crawled", "")
-                    }
-                ) for doc in documents
-            ]
+            # Process documents in batches to avoid payload size issues
+            batch_size = 50  # Adjust this based on your document sizes
+            total_indexed = 0
             
-            # Track document IDs for marking as indexed
-            document_ids = [doc.get("id") for doc in documents]
-            stats["documents_processed"] = len(document_ids)
-            
-            # Run the pipeline
-            nodes = pipeline.run(
-                documents=doc_objects,
-                show_progress=True,
-            )
-            
-            # Create the index
-            index = VectorStoreIndex(nodes)
-            
-            # Mark documents as indexed
-            await mark_documents_as_indexed(db, document_ids)
-            stats["documents_indexed"] = len(document_ids)
+            for i in range(0, len(documents), batch_size):
+                batch_docs = documents[i:i+batch_size]
+                logger.info(f"Processing batch {i//batch_size + 1}/{(len(documents)-1)//batch_size + 1} " +
+                           f"({len(batch_docs)} documents)")
+                
+                # Convert dictionary documents to Document objects
+                doc_objects = [
+                    Document(
+                        text=doc.get("content", ""),
+                        metadata={
+                            "title": doc.get("title", ""),
+                            "url": doc.get("url", ""),
+                            "doc_id": doc.get("id", ""),
+                            "last_crawled": doc.get("last_crawled", "")
+                        }
+                    ) for doc in batch_docs
+                ]
+                
+                # Track document IDs for marking as indexed
+                document_ids = [doc.get("id") for doc in batch_docs]
+                
+                try:
+                    # Run the pipeline for this batch
+                    nodes = pipeline.run(
+                        documents=doc_objects,
+                        show_progress=True,
+                    )
+                    
+                    # Mark batch as indexed
+                    await mark_documents_as_indexed(db, document_ids)
+                    total_indexed += len(document_ids)
+                    
+                    logger.info(f"Successfully indexed batch of {len(document_ids)} documents")
+                    
+                except Exception as e:
+                    logger.error(f"Error processing batch: {e}")
+                    # Continue with next batch instead of failing completely
+                    continue
             
             # Update stats
+            stats["documents_processed"] = len(documents)
+            stats["documents_indexed"] = total_indexed
+            
             end_time = datetime.now(timezone.utc)
             stats.update({
                 "status": "completed",
@@ -511,7 +527,7 @@ async def index_documents_by_collection(collection_id: str) -> Dict[str, Any]:
                 "processing_time_seconds": (end_time - start_time).total_seconds()
             })
             
-            logger.info(f"Successfully indexed {len(document_ids)} documents in collection '{collection_id}'")
+            logger.info(f"Successfully indexed {total_indexed}/{len(documents)} documents in collection '{collection_id}'")
             return stats
     
     except Exception as e:
@@ -522,6 +538,65 @@ async def index_documents_by_collection(collection_id: str) -> Dict[str, Any]:
             "end_time": datetime.now(timezone.utc).isoformat()
         })
         return stats
+
+async def has_unindexed_documents(
+    db: AsyncSession,
+    collection_id: str
+) -> Tuple[bool, int]:
+    """
+    Check if a collection has unindexed documents.
+    
+    Args:
+        db: Database session
+        collection_id: The collection ID to check
+        
+    Returns:
+        Tuple of (has_unindexed, count)
+    """
+    try:
+        # Build query to count unindexed documents in this collection
+        query = select(func.count(Webpage.id)).where(
+            and_(
+                Webpage.collection_id == collection_id,
+                Webpage.is_indexed == False,
+                Webpage.content_markdown != None
+            )
+        )
+        
+        # Execute query
+        result = await db.execute(query)
+        count = result.scalar() or 0
+        
+        return (count > 0, count)
+    
+    except Exception as e:
+        logger.error(f"Error checking for unindexed documents in collection '{collection_id}': {e}")
+        return (False, 0)
+
+async def should_crawl_collection(collection_id: str) -> bool:
+    """
+    Determine if a collection should be crawled based on unindexed document count.
+    
+    Args:
+        collection_id: The collection ID to check
+        
+    Returns:
+        True if crawling should proceed, False if indexing should happen first
+    """
+    try:
+        async with async_session_maker() as db:
+            has_unindexed, count = await has_unindexed_documents(db, collection_id)
+            
+            if has_unindexed and count > 100:
+                logger.info(f"Collection '{collection_id}' has {count} unindexed documents. " +
+                           f"Indexing should be done before additional crawling.")
+                return False
+            
+            return True
+    except Exception as e:
+        logger.error(f"Error checking if collection '{collection_id}' should be crawled: {e}")
+        # Default to allowing crawl if we can't check
+        return True
 
 def start_background_indexing(collection_id: str) -> None:
     """

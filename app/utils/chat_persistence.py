@@ -213,3 +213,141 @@ class ChatPersistenceService:
             logger.error(f"Error deleting chat session: {str(e)}")
             await db.rollback()
             return False
+    
+    @staticmethod
+    async def get_chat_with_messages(db: AsyncSession, session_id: str) -> Optional[Dict[str, Any]]:
+        """
+        Get a chat by session ID with all its messages loaded properly for async context.
+        
+        Args:
+            db: Database session
+            session_id: The session ID to look up
+            
+        Returns:
+            Dictionary with 'chat' and 'messages' if found, None otherwise
+        """
+        try:
+            # First get the chat
+            chat_query = select(Chat).where(Chat.session_id == session_id)
+            chat_result = await db.execute(chat_query)
+            chat = chat_result.scalars().first()
+            
+            if not chat:
+                logger.warning(f"Chat session {session_id} not found")
+                return None
+            
+            # Then get all messages for this chat with a separate query
+            messages_query = select(ChatMessage).where(ChatMessage.chat_id == chat.id).order_by(ChatMessage.timestamp)
+            messages_result = await db.execute(messages_query)
+            messages = messages_result.scalars().all()
+            
+            return {
+                "chat": chat,
+                "messages": messages
+            }
+            
+        except Exception as e:
+            logger.error(f"Error getting chat with messages: {str(e)}")
+            return None
+    
+    @staticmethod
+    async def save_messages(db: AsyncSession, session_id: str, messages: List[Any]) -> bool:
+        """
+        Save a list of messages to the database.
+        
+        Args:
+            db: Database session
+            session_id: The session ID to save messages for
+            messages: List of ModelMessage objects to save
+            
+        Returns:
+            True if successful, False otherwise
+        """
+        try:
+            # First, get the chat
+            chat = await ChatPersistenceService.get_chat_by_session_id(db, session_id)
+            if not chat:
+                logger.error(f"Chat session {session_id} not found")
+                return False
+                
+            # Convert messages to Python objects
+            messages_as_python = to_jsonable_python(messages)
+            
+            # Save each message
+            for i, message in enumerate(messages_as_python):
+                if i % 2 == 0:  # Even indices are user messages
+                    message_type = "user"
+                    message_obj = {"query": message.get("content", "")}
+                else:  # Odd indices are assistant messages
+                    message_type = "assistant"
+                    message_obj = {
+                        "session_id": session_id,
+                        "answer": message.get("content", ""),
+                        "sources": [],  # You may want to extract this from the message
+                        "confidence": 0.9,  # Default value
+                        "retriever_type": "default",
+                        "trace_id": str(uuid.uuid4())
+                    }
+                
+                # Create message
+                chat_message = ChatMessage(
+                    chat_id=chat.id,
+                    message_id=str(uuid4()),
+                    message_type=message_type,
+                    message_object=message_obj,
+                    history=messages_as_python if message_type == "assistant" else None,
+                    timestamp=datetime.now(timezone.utc)
+                )
+                db.add(chat_message)
+            
+            # Update the chat's updated_at timestamp
+            chat.updated_at = datetime.now(timezone.utc)
+            
+            await db.commit()
+            logger.info(f"Saved {len(messages_as_python)} messages for chat session {session_id}")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Error saving messages: {str(e)}")
+            await db.rollback()
+            return False
+    
+    @staticmethod
+    async def load_messages(db: AsyncSession, session_id: str) -> Optional[List[Any]]:
+        """
+        Load message history for a chat session as ModelMessage objects.
+        
+        Args:
+            db: Database session
+            session_id: The session ID to load messages for
+            
+        Returns:
+            List of model messages if found and valid, None otherwise
+        """
+        try:
+            # Use the get_chat_with_messages method to get properly loaded messages
+            chat_with_messages = await ChatPersistenceService.get_chat_with_messages(db, session_id)
+            if not chat_with_messages:
+                logger.warning(f"Chat session {session_id} not found")
+                return None
+                
+            messages = chat_with_messages["messages"]
+            
+            # Find the most recent assistant message with history
+            latest_history = None
+            for msg in reversed(messages):
+                if msg.message_type == 'assistant' and msg.history:
+                    latest_history = msg.history
+                    break
+            
+            if latest_history:
+                # Convert history back to ModelMessage format
+                return ModelMessagesTypeAdapter.validate_python(latest_history)
+            
+            # If no history found, return empty list
+            logger.info(f"No message history found for session {session_id}")
+            return []
+            
+        except Exception as e:
+            logger.error(f"Error loading messages: {str(e)}")
+            return None
