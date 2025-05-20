@@ -30,6 +30,18 @@ from app.core.crawlers.utils import get_page_as_markdown
 from app.core.rag.indexer import extract_text_batch, get_collection_stats, start_background_indexing
 from app.core.orchestrator import generate_agent
 
+import logfire
+
+logfire.configure()
+
+logfire.instrument_openai()
+logfire.instrument()
+logfire.instrument_httpx()
+logfire.instrument_aiohttp_client()
+logfire.instrument_system_metrics()
+logfire.instrument_asyncpg()
+logfire.instrument_requests()
+
 
 # Configure logging
 logging.basicConfig(
@@ -74,6 +86,8 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+logfire.instrument_fastapi(app, capture_headers=True)
 
 # Database dependency
 # Using get_db from app.db.database

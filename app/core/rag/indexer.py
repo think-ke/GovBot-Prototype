@@ -15,6 +15,9 @@ import chromadb
 
 from app.db.models.webpage import Webpage
 
+from opentelemetry.instrumentation.llamaindex import LlamaIndexInstrumentor
+LlamaIndexInstrumentor().instrument()
+
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)

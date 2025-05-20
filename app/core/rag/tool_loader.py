@@ -15,6 +15,9 @@ logger = logging.getLogger(__name__)
 from dotenv import load_dotenv
 # Load environment variables from .env file
 
+from opentelemetry.instrumentation.llamaindex import LlamaIndexInstrumentor
+LlamaIndexInstrumentor().instrument()
+
 load_dotenv()
 
 

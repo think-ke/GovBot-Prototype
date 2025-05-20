@@ -61,6 +61,7 @@ humanfriendly==10.0
 idna==3.10
 importlib_metadata==8.6.1
 importlib_resources==6.5.2
+inflection==0.5.1
 Jinja2==3.1.6
 jiter==0.10.0
 jmespath==1.0.1
@@ -110,11 +111,20 @@ opentelemetry-exporter-otlp-proto-common==1.33.1
 opentelemetry-exporter-otlp-proto-grpc==1.33.1
 opentelemetry-exporter-otlp-proto-http==1.33.1
 opentelemetry-instrumentation==0.54b1
+opentelemetry-instrumentation-aiohttp-client==0.54b1
 opentelemetry-instrumentation-asgi==0.54b1
+opentelemetry-instrumentation-asyncpg==0.54b1
+opentelemetry-instrumentation-dbapi==0.54b1
 opentelemetry-instrumentation-fastapi==0.54b1
+opentelemetry-instrumentation-httpx==0.54b1
+opentelemetry-instrumentation-llamaindex==0.40.6
+opentelemetry-instrumentation-psycopg==0.54b1
+opentelemetry-instrumentation-requests==0.54b1
+opentelemetry-instrumentation-system-metrics==0.54b1
 opentelemetry-proto==1.33.1
 opentelemetry-sdk==1.33.1
 opentelemetry-semantic-conventions==0.54b1
+opentelemetry-semantic-conventions-ai==0.4.9
 opentelemetry-util-http==0.54b1
 orjson==3.10.18
 overrides==7.7.0
@@ -126,6 +136,7 @@ posthog==4.0.1
 prompt_toolkit==3.0.51
 propcache==0.3.1
 protobuf==5.29.4
+psutil==7.0.0
 psycopg2-binary==2.9.10
 pyasn1==0.6.1
 pyasn1_modules==0.4.2
