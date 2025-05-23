@@ -35,7 +35,7 @@ class Output(BaseModel):
                     {"title": "Film Industry Guidelines", "url": "https://kenyafilm.go.ke/guidelines"}
                 ],
                 "confidence": 0.95,
-                "retriever_type": "hybrid",
+                "retriever_type": "kfc",  # Changed from "hybrid" to a valid collection ID
                 "recommended_follow_up_questions": [
                     "What financial incentives does the Kenya Film Commission offer?",
                     "How can I register a film production company in Kenya?",

@@ -55,7 +55,7 @@ class ChatResponse(BaseModel):
                     {"title": "Business Registration Guidelines", "url": "https://example.gov/business-reg"}
                 ],
                 "confidence": 0.92,
-                "retriever_type": "hybrid",
+                "retriever_type": "brs",  # Changed from "hybrid" to a valid collection ID
                 "trace_id": "7fa85f64-5717-4562-b3fc-2c963f66afa7",
                 "recommended_follow_up_questions": [
                     "What are the fees for business registration?",
@@ -94,7 +94,7 @@ class ChatHistoryResponse(BaseModel):
                             "answer": "To register a business in Kenya, you need to follow these steps...",
                             "sources": [{"title": "Business Registration Guidelines", "url": "https://example.gov/business-reg"}],
                             "confidence": 0.92,
-                            "retriever_type": "hybrid"
+                            "retriever_type": "brs"  # Changed from "hybrid" to a valid collection ID
                         },
                         "timestamp": "2023-10-20T14:30:18.654321"
                     }
