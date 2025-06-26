@@ -86,7 +86,7 @@ class Output(BaseModel):
         description="Identifier for the knowledge collection that was used for retrieval"
     )
     
-    recommended_follow_up_questions: Union[List[str], FollowUpQuestions] = Field(
+    recommended_follow_up_questions: List[FollowUpQuestions] = Field(
         default_factory=list,
         description="Suggested follow-up questions the user might want to ask next"
     )
