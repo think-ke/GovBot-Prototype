@@ -52,6 +52,26 @@ services:
       timeout: 5s
       retries: 5
 
+  backup:
+    build:
+      context: .
+      dockerfile: docker/backup.Dockerfile
+    environment:
+      - POSTGRES_HOST=postgres
+      - POSTGRES_PORT=5432
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-postgres}
+      - POSTGRES_DB=govstackdb
+      - BACKUP_SCHEDULE=0 2 * * *     # Daily at 2 AM for production
+      - BACKUP_RETENTION_DAYS=30      # Keep 30 days for production
+    volumes:
+      - ./backups/prod:/backups
+    depends_on:
+      - postgres
+    networks:
+      - govstack-net
+    restart: unless-stopped
+
   chroma:
     image: chromadb/chroma:1.0.10.dev32
     ports:
@@ -60,7 +80,7 @@ services:
       - CHROMA_SERVER_AUTHN_CREDENTIALS_FILE=/chroma/server.htpasswd
       - CHROMA_SERVER_AUTHN_PROVIDER=chromadb.auth.basic_authn.BasicAuthenticationServerProvider
     volumes:
-      - ./data/chroma:/chroma/chroma:rw
+      - ./data/chroma:/data:rw
       - ./server.htpasswd:/chroma/server.htpasswd:ro
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/api/v1/heartbeat"]

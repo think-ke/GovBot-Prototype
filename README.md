@@ -4,29 +4,49 @@ GovStack is an intelligent document management and citizen assistance system des
 
 ## Features
 
-- AI-powered assistance for eCitizen services in Kenya using PydanticAI agents
-- RAG (Retrieval Augmented Generation) capabilities for accurate information retrieval
-- Document upload, storage, and retrieval with semantic search
-- Web crawling capabilities for automatic information gathering
-- Collection-based organization of documents and web content
-- Conversation history persistence with the ability to continue conversations
-- MinIO integration for scalable object storage
-- ChromaDB for vector database capabilities
-- PostgreSQL for relational data storage
-- Docker-based deployment for production and development environments
-- Fully containerized architecture for easy deployment across environments
+### Core Features
+- **AI-powered assistance** for eCitizen services in Kenya using PydanticAI agents
+- **RAG (Retrieval Augmented Generation)** capabilities for accurate information retrieval
+- **Document management** with upload, storage, and retrieval using semantic search
+- **Web crawling** capabilities for automatic information gathering
+- **Collection-based organization** of documents and web content
+- **Conversation history persistence** with the ability to continue conversations
+- **Token usage tracking** for OpenAI API cost monitoring and projections
+
+### Infrastructure & Storage
+- **MinIO integration** for scalable object storage
+- **ChromaDB** for vector database capabilities with authentication
+- **PostgreSQL** for relational data storage with automated backups
+- **Docker-based deployment** for production and development environments
+- **Fully containerized architecture** for easy deployment across environments
+
+### Backup & Recovery
+- **Automated database backups** with configurable retention policies
+- **Graceful shutdown** with automatic backup creation
+- **Manual backup tools** for on-demand database snapshots
+- **Disaster recovery procedures** with comprehensive restore capabilities
+
+### Testing & Scalability
+- **Comprehensive testing suite** for performance and scalability validation
+- **Load testing** supporting up to 1000 concurrent users and 40,000 daily users
+- **External API testing** capabilities for testing against remote deployments
+- **Token usage tracking** and cost projection for scaling scenarios
+- **Performance monitoring** with Prometheus and Grafana integration
 
 ## Prerequisites
 
-- Docker and Docker Compose v2.x+
-- For local development:
+- **Docker and Docker Compose v2.x+**
+- **For local development:**
   - Python 3.11+ (required for compatibility with dependencies)
   - Git
-  - 4GB+ RAM available for running containers
+  - 4GB+ RAM available for running containers (8GB+ recommended for testing)
   - 20GB+ free disk space for databases and document storage
-- For API access:
+- **For API access:**
   - Valid OpenAI API key for LLM functionality
   - Optional: Additional API keys as specified in .env.example
+- **For scalability testing:**
+  - Additional RAM and CPU cores (16GB RAM, 8 CPU cores for 1000+ concurrent users)
+  - Network connectivity for external API testing
 
 ## Quick Start
 
@@ -96,14 +116,20 @@ This diagram illustrates the core components and data flow of the GovStack syste
 - **MinIO Object Storage**:
   - Production API: http://localhost:9000
   - Production Console: http://localhost:9001
-  - Development API: http://localhost:9090
-  - Development Console: http://localhost:9091
+  - Development API: http://localhost:9002
+  - Development Console: http://localhost:9092
   - Default credentials: minioadmin/minioadmin (unless changed in .env)
 
 - **PostgreSQL**:
   - Production Port: 5432
   - Development Port: 5433
   - Default credentials: postgres/postgres (unless changed in .env)
+
+- **Testing Infrastructure**:
+  - Test Service UI: http://localhost:8080 (when running tests)
+  - Prometheus Monitoring: http://localhost:9090 (when running tests)
+  - Grafana Dashboard: http://localhost:3000 (when running tests)
+  - Locust Load Testing UI: http://localhost:8089 (when running load tests)
 
 ## API Documentation
 
@@ -637,11 +663,260 @@ For large vector collections:
 
 2. Consider sharding the vector database for very large collections
 
+## Backup and Disaster Recovery
+
+GovStack includes a comprehensive backup and disaster recovery system to protect your data and ensure business continuity.
+
+### Automated Database Backups
+
+GovStack automatically backs up your PostgreSQL database using dedicated backup containers:
+
+#### Production Environment
+- **Schedule**: Daily at 2:00 AM
+- **Retention**: 30 days
+- **Location**: `./backups/prod/`
+- **Service**: `backup` service in docker-compose.yml
+
+#### Development Environment  
+- **Schedule**: Every 6 hours
+- **Retention**: 7 days
+- **Location**: `./data/backups-dev/`
+- **Service**: `backup-dev` service in docker-compose.dev.yml
+
+### Manual Backup Operations
+
+Create manual backups using the provided scripts:
+
+```bash
+# Create a manual backup for production
+./scripts/postgres_backup.sh prod manual
+
+# Create a manual backup for development
+./scripts/postgres_backup.sh dev manual
+```
+
+### Graceful Shutdown with Backup
+
+Always use the graceful shutdown script to ensure a backup is created before stopping services:
+
+```bash
+# Shutdown production with backup
+./shutdown_with_backup.sh prod
+
+# Shutdown development with backup
+./shutdown_with_backup.sh dev
+```
+
+This script will:
+1. Create a final database backup
+2. Gracefully stop services in dependency order
+3. Provide backup confirmation with file location
+
+### Backup File Format
+
+Backup files follow a consistent naming pattern:
+```
+govstackdb_{environment}_{type}_{timestamp}.sql.gz
+```
+
+**Examples:**
+- `govstackdb_prod_scheduled_20250626_020000.sql.gz`
+- `govstackdb_dev_manual_20250626_140530.sql.gz`
+- `govstackdb_prod_shutdown_20250626_180000.sql.gz`
+
+### Disaster Recovery Procedures
+
+#### Complete System Restore
+
+1. **Stop all services:**
+   ```bash
+   docker compose down  # or docker compose -f docker-compose.dev.yml down
+   ```
+
+2. **Restore database from backup:**
+   ```bash
+   # Extract the backup file
+   gunzip data/backups/govstackdb_prod_shutdown_20250626_180000.sql.gz
+   
+   # Start only the database service
+   docker compose up -d postgres
+   
+   # Restore the database
+   docker exec -i govstack-server-postgres-1 psql -U postgres -d govstackdb < data/backups/govstackdb_prod_shutdown_20250626_180000.sql
+   ```
+
+3. **Restore file storage (if needed):**
+   ```bash
+   # Restore MinIO data from backup
+   rsync -avz /path/to/backup/minio/ ./data/minio/
+   
+   # Restore ChromaDB vectors from backup
+   rsync -avz /path/to/backup/chroma/ ./data/chroma/
+   ```
+
+4. **Start all services:**
+   ```bash
+   docker compose up -d
+   ```
+
+#### Monitoring Backup Health
+
+Check backup service status and logs:
+
+```bash
+# Production backup logs
+docker logs govstack-server-backup-1
+
+# Development backup logs  
+docker logs govstack-test-server-backup-dev-1
+
+# Check backup service status
+docker compose ps backup
+```
+
+### Backup Best Practices
+
+- **Regular Testing**: Test restore procedures regularly
+- **Off-site Storage**: Copy backups to remote storage for disaster recovery
+- **Monitoring**: Set up alerts for backup failures
+- **Documentation**: Keep restore procedures documented and accessible
+
+For detailed backup configuration, see [README_DATABASE_BACKUPS.md](./README_DATABASE_BACKUPS.md).
+
+## Token Usage Tracking & Cost Management
+
+GovStack includes comprehensive token usage tracking to help you monitor and project OpenAI API costs:
+
+### Automatic Token Tracking
+
+All API requests automatically track:
+- **Request tokens**: Input tokens sent to the LLM
+- **Response tokens**: Output tokens generated by the LLM  
+- **Total tokens**: Combined token usage
+- **Cost estimates**: Based on current OpenAI pricing
+
+### Supported Models & Pricing
+
+The system tracks costs for:
+- **GPT-4**: $0.03 input / $0.06 output per 1K tokens
+- **GPT-4 Turbo**: $0.005 input / $0.015 output per 1K tokens
+- **GPT-3.5 Turbo**: $0.001 input / $0.002 output per 1K tokens
+- **Embeddings**: $0.00002 per 1K tokens
+
+### Usage Analytics
+
+Token usage data includes:
+- **Timestamp tracking**: When each request was made  
+- **Model identification**: Which LLM model was used
+- **Request correlation**: Link usage to specific chat sessions
+- **Cost projections**: Estimate monthly/daily costs based on usage patterns
+
+### Scalability Cost Projections
+
+For scaling planning, the system can project costs for:
+- **1,000 concurrent users**: Estimated monthly API costs
+- **40,000 daily users**: Daily and monthly usage projections
+- **Peak load scenarios**: Cost implications of high-traffic periods
+
+## Scalability Testing Suite
+
+GovStack includes a comprehensive testing infrastructure to validate performance at scale.
+
+### Testing Capabilities
+
+The testing suite can simulate:
+- **Up to 1,000 concurrent users**
+- **40,000 daily users** with realistic usage patterns
+- **Performance benchmarking** under various load conditions
+- **External API testing** against remote deployments
+
+### Test Types Available
+
+#### Load Testing Scenarios
+- **Baseline Performance**: Single-user performance metrics
+- **Concurrent Users**: 10, 25, 50, 100, 250, 500, 1000 concurrent users  
+- **Daily Load Simulation**: Realistic usage patterns throughout the day
+- **Stress Testing**: Push the system beyond normal limits
+- **Memory & Latency Analysis**: Resource usage and response time tracking
+
+#### Key Metrics Measured
+- **Response Times**: Average, median, P95, P99, maximum
+- **Success Rates**: Request success/failure ratios
+- **Memory Usage**: RAM consumption patterns over time
+- **Token Usage**: OpenAI API costs and usage projections
+- **Throughput**: Requests per second capacity
+- **Network Latency**: Connection and processing delays
+
+### Running Performance Tests
+
+#### Quick Performance Check
+```bash
+cd tests/
+./run_tests.sh quick-check
+```
+
+#### Full Scalability Test Suite
+```bash
+# Run all test types
+cd tests/
+./run_tests.sh run-tests
+
+# Run specific test types
+./run_tests.sh run-tests --test-types baseline,concurrent --max-users 500
+```
+
+#### Interactive Load Testing
+```bash
+# Start Locust web UI for manual testing control
+cd tests/
+./run_tests.sh locust-ui
+# Then open http://localhost:8089
+```
+
+### External API Testing
+
+Test against existing GovStack deployments without running local services:
+
+#### Setup External Testing
+```bash
+cd tests/
+# Configure target server
+nano .env.external  # Set EXTERNAL_API_URL=http://your-server:5005
+
+# Start external test environment
+./run_tests.sh start-external
+
+# Run tests against external server
+./run_tests.sh run-tests --api-url http://your-server:5005
+```
+
+### Monitoring & Analytics
+
+The testing infrastructure includes:
+- **Prometheus**: Metrics collection and storage
+- **Grafana**: Performance visualization dashboards  
+- **Real-time monitoring**: Live performance metrics during tests
+- **Test result storage**: Historical test run data
+- **Automated reporting**: Performance summaries and recommendations
+
+### Test Environment Requirements
+
+#### Minimum Requirements
+- 4GB RAM, 2 CPU cores
+- Docker and Docker Compose
+
+#### Recommended for Full Scale Testing  
+- 16GB RAM, 8 CPU cores
+- SSD storage for database performance
+- Stable network connection for external testing
+
+For detailed testing documentation, see [tests/README.md](./tests/README.md).
+
 ## Backup and Restore
 
-### Creating Backups
+### Legacy Backup Commands
 
-Regularly back up all data for disaster recovery:
+For additional backup operations, you can also use these direct commands:
 
 ```bash
 # Back up PostgreSQL database
@@ -654,7 +929,7 @@ rsync -avz ./data/minio /path/to/backup/
 rsync -avz ./data/chroma /path/to/backup/
 ```
 
-### Restoring from Backup
+### Legacy Restore Commands
 
 ```bash
 # Restore PostgreSQL database
@@ -664,6 +939,8 @@ cat backup_20230515.sql | docker compose exec -T postgres psql -U postgres -d go
 rsync -avz /path/to/backup/minio/ ./data/minio/
 rsync -avz /path/to/backup/chroma/ ./data/chroma/
 ```
+
+**Note**: The automated backup system described above is the recommended approach for production use.
 
 ## License
 
