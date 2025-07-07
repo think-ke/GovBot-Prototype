@@ -10,7 +10,10 @@ from sqlalchemy.orm import selectinload
 from sqlalchemy.sql import select
 
 from .models import Chat, ChatMessage, Document, Webpage
-from .schemas import *
+from .schemas import (
+    UserDemographics, SessionFrequency, TrafficMetrics, SessionDuration,
+    ConversationFlow, ROIMetrics, ContainmentRate, TrendData, DistributionData
+)
 
 class AnalyticsService:
     """Service class for analytics calculations and data processing."""

@@ -70,14 +70,14 @@ python -m analytics.main
 
 ### Production
 ```bash
-uvicorn analytics.main:app --host 0.0.0.0 --port 8001
+uvicorn analytics.main:app --host 0.0.0.0 --port 8005
 ```
 
 ## API Documentation
 
 Once running, visit:
-- Swagger UI: http://localhost:8001/analytics/docs
-- ReDoc: http://localhost:8001/analytics/redoc
+- Swagger UI: http://localhost:8005/analytics/docs
+- ReDoc: http://localhost:8005/analytics/redoc
 
 ## Key Features
 

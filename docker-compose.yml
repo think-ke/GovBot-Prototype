@@ -113,6 +113,27 @@ services:
       retries: 3
     restart: unless-stopped
 
+  analytics:
+    build:
+      context: .
+      dockerfile: analytics/Dockerfile
+    ports:
+      - "${ANALYTICS_PORT:-8005}:8005"
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://postgres:${POSTGRES_PASSWORD:-postgres}@postgres:5432/govstackdb
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - govstack-net
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8005/analytics/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped
+
   metabase:
     image: metabase/metabase:latest
     container_name: metabase
