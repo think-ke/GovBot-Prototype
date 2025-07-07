@@ -1,7 +1,7 @@
 import { MetricCard } from "@/components/metric-card"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
-import { Users, UserPlus, UserCheck, Clock, MapPin, Smartphone, Heart } from "lucide-react"
+import { Users, UserPlus, UserCheck, Clock, MapPin, Smartphone, Heart, Loader2 } from "lucide-react"
 import { ChartContainer, ChartTooltip, ChartTooltipContent } from "@/components/ui/chart"
 import {
   BarChart,
@@ -16,36 +16,23 @@ import {
   Pie,
   Cell,
 } from "recharts"
+import { useEffect, useState } from "react"
+import {
+  UserDemographics,
+  SessionFrequency,
+  UserSentiment,
+  RetentionData,
+  fetchUserDemographics,
+  fetchSessionFrequency,
+  fetchUserSentiment,
+  fetchUserRetention
+} from "@/lib/analytics-api"
 
-// Mock data
-const userGrowthData = [
-  { month: "Jan", newUsers: 150, returningUsers: 700, totalUsers: 850 },
-  { month: "Feb", newUsers: 250, returningUsers: 850, totalUsers: 1100 },
-  { month: "Mar", newUsers: 150, returningUsers: 1100, totalUsers: 1250 },
-  { month: "Apr", newUsers: 170, returningUsers: 1250, totalUsers: 1420 },
-  { month: "May", newUsers: 230, returningUsers: 1420, totalUsers: 1650 },
-  { month: "Jun", newUsers: 200, returningUsers: 1650, totalUsers: 1850 },
-]
-
-const sessionFrequencyData = [
-  { range: "1 session", users: 420, percentage: 22.7 },
-  { range: "2-5 sessions", users: 650, percentage: 35.1 },
-  { range: "6-10 sessions", users: 480, percentage: 25.9 },
-  { range: "11-20 sessions", users: 200, percentage: 10.8 },
-  { range: "20+ sessions", users: 100, percentage: 5.4 },
-]
-
+// Mock data for features not yet implemented in API
 const deviceDistribution = [
   { name: "Mobile", value: 65, color: "#10b981" },
   { name: "Desktop", value: 28, color: "#3b82f6" },
   { name: "Tablet", value: 7, color: "#f59e0b" },
-]
-
-const retentionData = [
-  { period: "Day 1", rate: 65.5 },
-  { period: "Day 7", rate: 42.3 },
-  { period: "Day 30", rate: 28.7 },
-  { period: "Day 90", rate: 18.2 },
 ]
 
 const chartConfig = {
@@ -64,41 +51,134 @@ const chartConfig = {
 }
 
 export function UserAnalyticsDashboard() {
+  // State for API data
+  const [demographics, setDemographics] = useState<UserDemographics | null>(null)
+  const [sessionFrequencyData, setSessionFrequencyData] = useState<SessionFrequency[]>([])
+  const [sentimentData, setSentimentData] = useState<UserSentiment | null>(null)
+  const [retentionData, setRetentionData] = useState<RetentionData | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+
+  // Processed data for charts
+  const [processedSessionFrequency, setProcessedSessionFrequency] = useState<any[]>([])
+  const [processedRetention, setProcessedRetention] = useState<any[]>([])
+
+  // Fetch data on component mount
+  useEffect(() => {
+    const fetchData = async () => {
+      try {
+        setLoading(true)
+        setError(null)
+        
+        const [demographicsData, sessionData, sentimentDataResult, retentionDataResult] = await Promise.all([
+          fetchUserDemographics(),
+          fetchSessionFrequency(),
+          fetchUserSentiment(),
+          fetchUserRetention()
+        ])
+
+        setDemographics(demographicsData)
+        setSessionFrequencyData(sessionData)
+        setSentimentData(sentimentDataResult)
+        setRetentionData(retentionDataResult)
+
+        // Process session frequency data for charts
+        const sessionRanges = [
+          { range: "1 session", min: 1, max: 1 },
+          { range: "2-5 sessions", min: 2, max: 5 },
+          { range: "6-10 sessions", min: 6, max: 10 },
+          { range: "11-20 sessions", min: 11, max: 20 },
+          { range: "20+ sessions", min: 21, max: Infinity },
+        ]
+
+        const totalUsers = sessionData.length
+        const processedFrequency = sessionRanges.map(range => {
+          const users = sessionData.filter(user => 
+            user.total_sessions >= range.min && user.total_sessions <= range.max
+          ).length
+          return {
+            range: range.range,
+            users,
+            percentage: totalUsers > 0 ? (users / totalUsers * 100) : 0
+          }
+        })
+        setProcessedSessionFrequency(processedFrequency)
+
+        // Process retention data for charts
+        if (retentionDataResult) {
+          const retention = [
+            { period: "Day 1", rate: retentionDataResult.day_1_retention },
+            { period: "Day 7", rate: retentionDataResult.day_7_retention },
+            { period: "Day 30", rate: retentionDataResult.day_30_retention },
+          ]
+          setProcessedRetention(retention)
+        }
+
+      } catch (err) {
+        setError(err instanceof Error ? err.message : 'An error occurred')
+      } finally {
+        setLoading(false)
+      }
+    }
+
+    fetchData()
+  }, [])
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center h-64">
+        <Loader2 className="w-8 h-8 animate-spin" />
+        <span className="ml-2">Loading analytics data...</span>
+      </div>
+    )
+  }
+
+  if (error) {
+    return (
+      <div className="flex items-center justify-center h-64">
+        <div className="text-center">
+          <p className="text-red-600 mb-2">Error loading analytics data</p>
+          <p className="text-sm text-gray-600">{error}</p>
+        </div>
+      </div>
+    )
+  }
+
   return (
     <div className="space-y-6">
       {/* User Overview Metrics */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
         <MetricCard
           title="Total Users"
-          value={1850}
-          change={18.2}
+          value={demographics?.total_users || 0}
+          change={demographics?.user_growth_rate || 0}
           changeLabel="vs last month"
           icon={<Users className="w-4 h-4" />}
-          trend="up"
+          trend={demographics?.user_growth_rate && demographics.user_growth_rate > 0 ? "up" : "down"}
         />
         <MetricCard
           title="New Users"
-          value={200}
-          change={-13.0}
+          value={demographics?.new_users || 0}
+          change={0} // Would need additional API data for change calculation
           changeLabel="vs last month"
           icon={<UserPlus className="w-4 h-4" />}
-          trend="down"
+          trend="neutral"
         />
         <MetricCard
           title="Active Users"
-          value={1420}
-          change={8.5}
+          value={demographics?.active_users || 0}
+          change={0} // Would need additional API data for change calculation
           changeLabel="vs last month"
           icon={<UserCheck className="w-4 h-4" />}
-          trend="up"
+          trend="neutral"
         />
         <MetricCard
-          title="Avg Session Duration"
-          value="8.5 min"
-          change={5.2}
+          title="Returning Users"
+          value={demographics?.returning_users || 0}
+          change={0} // Would need additional API data for change calculation
           changeLabel="vs last month"
           icon={<Clock className="w-4 h-4" />}
-          trend="up"
+          trend="neutral"
         />
       </div>
 
@@ -106,26 +186,40 @@ export function UserAnalyticsDashboard() {
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <Card>
           <CardHeader>
-            <CardTitle>User Growth Trends</CardTitle>
+            <CardTitle>User Growth Overview</CardTitle>
           </CardHeader>
           <CardContent>
-            <ChartContainer config={chartConfig} className="h-[300px]">
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={userGrowthData}>
-                  <CartesianGrid strokeDasharray="3 3" />
-                  <XAxis dataKey="month" />
-                  <YAxis />
-                  <ChartTooltip content={<ChartTooltipContent />} />
-                  <Bar dataKey="newUsers" fill="var(--color-newUsers)" name="New Users" radius={[4, 4, 0, 0]} />
-                  <Bar
-                    dataKey="returningUsers"
-                    fill="var(--color-returningUsers)"
-                    name="Returning Users"
-                    radius={[4, 4, 0, 0]}
-                  />
-                </BarChart>
-              </ResponsiveContainer>
-            </ChartContainer>
+            <div className="space-y-4">
+              <div className="grid grid-cols-2 gap-4">
+                <div className="text-center p-4 bg-emerald-50 rounded-lg">
+                  <div className="text-2xl font-bold text-emerald-600">
+                    {demographics?.total_users || 0}
+                  </div>
+                  <div className="text-sm text-emerald-700">Total Users</div>
+                </div>
+                <div className="text-center p-4 bg-blue-50 rounded-lg">
+                  <div className="text-2xl font-bold text-blue-600">
+                    {demographics?.new_users || 0}
+                  </div>
+                  <div className="text-sm text-blue-700">New Users</div>
+                </div>
+                <div className="text-center p-4 bg-orange-50 rounded-lg">
+                  <div className="text-2xl font-bold text-orange-600">
+                    {demographics?.active_users || 0}
+                  </div>
+                  <div className="text-sm text-orange-700">Active Users</div>
+                </div>
+                <div className="text-center p-4 bg-purple-50 rounded-lg">
+                  <div className="text-2xl font-bold text-purple-600">
+                    {demographics?.returning_users || 0}
+                  </div>
+                  <div className="text-sm text-purple-700">Returning Users</div>
+                </div>
+              </div>
+              <div className="text-center text-sm text-gray-600">
+                Growth Rate: {demographics?.user_growth_rate.toFixed(1) || 0}%
+              </div>
+            </div>
           </CardContent>
         </Card>
 
@@ -135,13 +229,13 @@ export function UserAnalyticsDashboard() {
           </CardHeader>
           <CardContent>
             <div className="space-y-4">
-              {sessionFrequencyData.map((item, index) => (
+              {processedSessionFrequency.map((item, index) => (
                 <div key={index} className="space-y-2">
                   <div className="flex justify-between items-center">
                     <span className="text-sm font-medium">{item.range}</span>
                     <div className="flex items-center space-x-2">
                       <span className="text-sm text-gray-600">{item.users} users</span>
-                      <Badge variant="secondary">{item.percentage}%</Badge>
+                      <Badge variant="secondary">{item.percentage.toFixed(1)}%</Badge>
                     </div>
                   </div>
                   <div className="w-full bg-gray-200 rounded-full h-2">
@@ -205,7 +299,7 @@ export function UserAnalyticsDashboard() {
           <CardContent>
             <ChartContainer config={chartConfig} className="h-[250px]">
               <ResponsiveContainer width="100%" height="100%">
-                <LineChart data={retentionData}>
+                <LineChart data={processedRetention}>
                   <CartesianGrid strokeDasharray="3 3" />
                   <XAxis dataKey="period" />
                   <YAxis />
@@ -236,7 +330,9 @@ export function UserAnalyticsDashboard() {
           <CardContent>
             <div className="space-y-6">
               <div className="text-center">
-                <div className="text-3xl font-bold text-emerald-600">4.6/5</div>
+                <div className="text-3xl font-bold text-emerald-600">
+                  {sentimentData?.satisfaction_score.toFixed(1) || 'N/A'}/5
+                </div>
                 <div className="text-sm text-gray-600">Overall Satisfaction Score</div>
               </div>
 
@@ -245,9 +341,22 @@ export function UserAnalyticsDashboard() {
                   <span className="text-sm">Positive Conversations</span>
                   <div className="flex items-center space-x-2">
                     <div className="w-24 bg-gray-200 rounded-full h-2">
-                      <div className="bg-emerald-600 h-2 rounded-full" style={{ width: "75%" }} />
+                      <div 
+                        className="bg-emerald-600 h-2 rounded-full" 
+                        style={{ 
+                          width: `${sentimentData ? 
+                            (sentimentData.positive_conversations / 
+                            (sentimentData.positive_conversations + sentimentData.neutral_conversations + sentimentData.negative_conversations) * 100) 
+                            : 0}%` 
+                        }} 
+                      />
                     </div>
-                    <span className="text-sm font-medium">75%</span>
+                    <span className="text-sm font-medium">
+                      {sentimentData ? 
+                        Math.round(sentimentData.positive_conversations / 
+                        (sentimentData.positive_conversations + sentimentData.neutral_conversations + sentimentData.negative_conversations) * 100) 
+                        : 0}%
+                    </span>
                   </div>
                 </div>
 
@@ -255,9 +364,22 @@ export function UserAnalyticsDashboard() {
                   <span className="text-sm">Neutral Conversations</span>
                   <div className="flex items-center space-x-2">
                     <div className="w-24 bg-gray-200 rounded-full h-2">
-                      <div className="bg-yellow-500 h-2 rounded-full" style={{ width: "20%" }} />
+                      <div 
+                        className="bg-yellow-500 h-2 rounded-full" 
+                        style={{ 
+                          width: `${sentimentData ? 
+                            (sentimentData.neutral_conversations / 
+                            (sentimentData.positive_conversations + sentimentData.neutral_conversations + sentimentData.negative_conversations) * 100) 
+                            : 0}%` 
+                        }} 
+                      />
                     </div>
-                    <span className="text-sm font-medium">20%</span>
+                    <span className="text-sm font-medium">
+                      {sentimentData ? 
+                        Math.round(sentimentData.neutral_conversations / 
+                        (sentimentData.positive_conversations + sentimentData.neutral_conversations + sentimentData.negative_conversations) * 100) 
+                        : 0}%
+                    </span>
                   </div>
                 </div>
 
@@ -265,9 +387,12 @@ export function UserAnalyticsDashboard() {
                   <span className="text-sm">Escalation Rate</span>
                   <div className="flex items-center space-x-2">
                     <div className="w-24 bg-gray-200 rounded-full h-2">
-                      <div className="bg-red-500 h-2 rounded-full" style={{ width: "5%" }} />
+                      <div 
+                        className="bg-red-500 h-2 rounded-full" 
+                        style={{ width: `${sentimentData?.escalation_rate || 0}%` }} 
+                      />
                     </div>
-                    <span className="text-sm font-medium">5%</span>
+                    <span className="text-sm font-medium">{sentimentData?.escalation_rate.toFixed(1) || 0}%</span>
                   </div>
                 </div>
               </div>

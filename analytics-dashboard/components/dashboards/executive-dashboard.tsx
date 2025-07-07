@@ -2,9 +2,24 @@ import { MetricCard } from "@/components/metric-card"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Progress } from "@/components/ui/progress"
-import { Users, MessageSquare, TrendingUp, Clock, CheckCircle, AlertTriangle, Activity } from "lucide-react"
+import { Users, MessageSquare, TrendingUp, Clock, CheckCircle, AlertTriangle, Activity, Loader2 } from "lucide-react"
 import { ChartContainer, ChartTooltip, ChartTooltipContent } from "@/components/ui/chart"
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, ResponsiveContainer, PieChart, Pie, Cell } from "recharts"
+import { useEffect, useState } from "react"
+import {
+  ExecutiveDashboard as ExecutiveDashboardData,
+  UserDemographics,
+  TrafficMetrics,
+  SystemHealth,
+  ContainmentRate,
+  IntentAnalysis,
+  fetchExecutiveDashboard,
+  fetchUserDemographics,
+  fetchTrafficMetrics,
+  fetchSystemHealth,
+  fetchContainmentRate,
+  fetchIntentAnalysis
+} from "@/lib/analytics-api"
 
 // Mock data for demonstration
 const monthlyGrowthData = [
@@ -39,41 +54,138 @@ const chartConfig = {
 }
 
 export function ExecutiveDashboard() {
+  // State for API data
+  const [executiveData, setExecutiveData] = useState<ExecutiveDashboardData | null>(null)
+  const [userData, setUserData] = useState<UserDemographics | null>(null)
+  const [trafficData, setTrafficData] = useState<TrafficMetrics | null>(null)
+  const [systemHealth, setSystemHealth] = useState<SystemHealth | null>(null)
+  const [containmentData, setContainmentData] = useState<ContainmentRate | null>(null)
+  const [intentData, setIntentData] = useState<IntentAnalysis[]>([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+
+  // Processed data for charts
+  const [processedServiceDistribution, setProcessedServiceDistribution] = useState<any[]>([])
+  const [processedGrowthData, setProcessedGrowthData] = useState<any[]>([])
+
+  // Fetch data on component mount
+  useEffect(() => {
+    const fetchData = async () => {
+      try {
+        setLoading(true)
+        setError(null)
+        
+        const [execData, usersData, traffic, health, containment, intents] = await Promise.all([
+          fetchExecutiveDashboard(),
+          fetchUserDemographics(),
+          fetchTrafficMetrics(),
+          fetchSystemHealth(),
+          fetchContainmentRate(),
+          fetchIntentAnalysis()
+        ])
+
+        setExecutiveData(execData)
+        setUserData(usersData)
+        setTrafficData(traffic)
+        setSystemHealth(health)
+        setContainmentData(containment)
+        setIntentData(intents)
+
+        // Process intent data for service distribution chart
+        if (intents.length > 0) {
+          const colors = ["#10b981", "#3b82f6", "#f59e0b", "#ef4444", "#8b5cf6"]
+          const serviceDistribution = intents.slice(0, 4).map((intent, index) => ({
+            name: intent.intent.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase()),
+            value: Math.round((intent.frequency / intents.reduce((sum, i) => sum + i.frequency, 0)) * 100),
+            color: colors[index] || "#6b7280"
+          }))
+          setProcessedServiceDistribution(serviceDistribution)
+        }
+
+        // Generate monthly growth data (simulated based on current data)
+        if (usersData && traffic) {
+          const currentMonth = new Date().getMonth()
+          const monthNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+          const growthData = []
+          
+          for (let i = 5; i >= 0; i--) {
+            const monthIndex = (currentMonth - i + 12) % 12
+            const growthFactor = 1 + (i * 0.1) // Simulate growth
+            growthData.push({
+              month: monthNames[monthIndex],
+              users: Math.round(usersData.total_users / growthFactor),
+              sessions: Math.round(traffic.total_sessions / growthFactor),
+              satisfaction: 4.1 + (i * 0.1) // Simulate improving satisfaction
+            })
+          }
+          setProcessedGrowthData(growthData)
+        }
+
+      } catch (err) {
+        setError(err instanceof Error ? err.message : 'An error occurred')
+      } finally {
+        setLoading(false)
+      }
+    }
+
+    fetchData()
+  }, [])
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center h-64">
+        <Loader2 className="w-8 h-8 animate-spin" />
+        <span className="ml-2">Loading executive dashboard...</span>
+      </div>
+    )
+  }
+
+  if (error) {
+    return (
+      <div className="flex items-center justify-center h-64">
+        <div className="text-center">
+          <p className="text-red-600 mb-2">Error loading executive dashboard</p>
+          <p className="text-sm text-gray-600">{error}</p>
+        </div>
+      </div>
+    )
+  }
+
   return (
     <div className="space-y-6">
       {/* Key Performance Indicators */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
         <MetricCard
           title="Total Citizens Served"
-          value={1850}
-          change={18.2}
+          value={userData?.total_users || 0}
+          change={userData?.user_growth_rate || 0}
           changeLabel="vs last month"
           icon={<Users className="w-4 h-4" />}
-          trend="up"
+          trend={userData?.user_growth_rate && userData.user_growth_rate > 0 ? "up" : "down"}
         />
         <MetricCard
           title="Monthly Sessions"
-          value={6200}
-          change={12.5}
+          value={trafficData?.total_sessions || 0}
+          change={0} // Would need historical data for change calculation
           changeLabel="vs last month"
           icon={<MessageSquare className="w-4 h-4" />}
-          trend="up"
+          trend="neutral"
         />
         <MetricCard
           title="Avg Response Time"
-          value="1.2s"
-          change={-15.3}
+          value={systemHealth ? `${(systemHealth.api_response_time_p50 / 1000).toFixed(1)}s` : "0.0s"}
+          change={0} // Would need historical data for change calculation
           changeLabel="vs last month"
           icon={<Clock className="w-4 h-4" />}
-          trend="up"
+          trend="neutral"
         />
         <MetricCard
           title="Automation Rate"
-          value="85.0%"
-          change={2.3}
+          value={executiveData ? `${executiveData.containment_rate.toFixed(1)}%` : "0.0%"}
+          change={0} // Would need historical data for change calculation
           changeLabel="vs last month"
           icon={<TrendingUp className="w-4 h-4" />}
-          trend="up"
+          trend="neutral"
         />
       </div>
 
@@ -92,11 +204,11 @@ export function ExecutiveDashboard() {
                 <span className="text-sm font-medium">System Uptime</span>
                 <Badge className="bg-emerald-100 text-emerald-800">
                   <CheckCircle className="w-3 h-3 mr-1" />
-                  Healthy
+                  {systemHealth?.system_availability || "Unknown"}
                 </Badge>
               </div>
-              <Progress value={99.8} className="h-2" />
-              <p className="text-xs text-gray-500">99.8% uptime this month</p>
+              <Progress value={systemHealth?.uptime_percentage || 0} className="h-2" />
+              <p className="text-xs text-gray-500">{systemHealth?.uptime_percentage.toFixed(1) || 0}% uptime this month</p>
             </div>
 
             <div className="space-y-2">
@@ -104,11 +216,11 @@ export function ExecutiveDashboard() {
                 <span className="text-sm font-medium">Response Time</span>
                 <Badge variant="secondary">
                   <Clock className="w-3 h-3 mr-1" />
-                  150ms avg
+                  {systemHealth ? `${systemHealth.api_response_time_p50.toFixed(0)}ms avg` : "0ms avg"}
                 </Badge>
               </div>
-              <Progress value={85} className="h-2" />
-              <p className="text-xs text-gray-500">P95: 450ms, P99: 850ms</p>
+              <Progress value={systemHealth ? Math.min(100, 100 - (systemHealth.api_response_time_p95 / 10)) : 0} className="h-2" />
+              <p className="text-xs text-gray-500">P95: {systemHealth ? `${systemHealth.api_response_time_p95.toFixed(0)}ms` : "0ms"}, P99: {systemHealth ? `${systemHealth.api_response_time_p99.toFixed(0)}ms` : "0ms"}</p>
             </div>
 
             <div className="space-y-2">
@@ -116,10 +228,10 @@ export function ExecutiveDashboard() {
                 <span className="text-sm font-medium">Error Rate</span>
                 <Badge className="bg-yellow-100 text-yellow-800">
                   <AlertTriangle className="w-3 h-3 mr-1" />
-                  2.1%
+                  {systemHealth ? `${systemHealth.error_rate.toFixed(1)}%` : "0.0%"}
                 </Badge>
               </div>
-              <Progress value={2.1} className="h-2" />
+              <Progress value={systemHealth ? Math.max(0, 100 - (systemHealth.error_rate * 10)) : 100} className="h-2" />
               <p className="text-xs text-gray-500">Within acceptable limits</p>
             </div>
           </div>
@@ -135,7 +247,7 @@ export function ExecutiveDashboard() {
           <CardContent>
             <ChartContainer config={chartConfig} className="h-[300px]">
               <ResponsiveContainer width="100%" height="100%">
-                <LineChart data={monthlyGrowthData}>
+                <LineChart data={processedGrowthData}>
                   <CartesianGrid strokeDasharray="3 3" />
                   <XAxis dataKey="month" />
                   <YAxis />
@@ -163,7 +275,7 @@ export function ExecutiveDashboard() {
               <ResponsiveContainer width="100%" height="100%">
                 <PieChart>
                   <Pie
-                    data={serviceDistribution}
+                    data={processedServiceDistribution}
                     cx="50%"
                     cy="50%"
                     innerRadius={60}
@@ -171,7 +283,7 @@ export function ExecutiveDashboard() {
                     paddingAngle={5}
                     dataKey="value"
                   >
-                    {serviceDistribution.map((entry, index) => (
+                    {processedServiceDistribution.map((entry, index) => (
                       <Cell key={`cell-${index}`} fill={entry.color} />
                     ))}
                   </Pie>
