@@ -26,6 +26,13 @@ share/python-wheels/
 *.egg
 MANIFEST
 
+# Environment files
+.env
+.env.*
+!.env.example
+
+
+
 # PyInstaller
 #  Usually these files are written by a python script from a template
 #  before PyInstaller builds the exe, so as to inject date/other infos into it.
@@ -182,3 +189,7 @@ data/minio
 data/minio-dev
 data/postgres
 data/postgres-dev
+data/backups
+data/backups-dev
+
+backups

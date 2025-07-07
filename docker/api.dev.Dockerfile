@@ -1,5 +1,5 @@
 # Use an official Python runtime as a parent image
-FROM python:3.11.12-bullseye
+FROM python:3.11.12-bookworm
 
 # Set the working directory in the container to /app
 WORKDIR /app
@@ -18,14 +18,17 @@ COPY ./requirements.txt /app/requirements.txt
 # Install Python dependencies
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Install development dependencies
+# Install gunicorn and uvloop
 RUN pip install --no-cache-dir gunicorn uvloop uvicorn[standard] watchfiles
 
 # Copy the application code
 COPY ./app /app/app
 
-# Make port 5005 available to the world outside this container
-EXPOSE 5005
+# Make port 5000 available to the world outside this container
+EXPOSE 5000
 
-# Use uvicorn with hot reload for development
-CMD ["gunicorn", "app.api.fast_api_app:app", "--workers", "1", "--worker-class", "uvicorn.workers.UvicornWorker", "--bind", "0.0.0.0:5005",  "--reload"]
+# Set environment variable defaults
+ENV USE_UVLOOP=false
+
+# Command to run the application
+CMD ["uvicorn", "app.api.fast_api_app:app", "--host", "0.0.0.0", "--port", "5005", "--loop", "asyncio", "--http", "httptools"]

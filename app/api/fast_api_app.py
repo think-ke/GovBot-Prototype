@@ -29,6 +29,7 @@ from app.core.crawlers.web_crawler import crawl_website
 from app.core.crawlers.utils import get_page_as_markdown
 from app.core.rag.indexer import extract_text_batch, get_collection_stats, start_background_indexing
 from app.core.orchestrator import generate_agent
+from app.utils.security import add_api_key_to_docs, validate_api_key, require_read_permission, require_write_permission, require_delete_permission, APIKeyInfo
 
 import logfire
 
@@ -73,10 +74,44 @@ async def lifespan(app: FastAPI):
 # Initialize FastAPI app
 app = FastAPI(
     title="GovStack API",
-    description="GovStack Document Management API",
+    description="GovStack Document Management API with API Key Authentication",
     version="0.1.0",
-    lifespan=lifespan  # Use the new lifespan manager
+    lifespan=lifespan,
+    openapi_tags=[
+        {
+            "name": "Core",
+            "description": "Core API endpoints for health checks and basic operations",
+        },
+        {
+            "name": "Chat", 
+            "description": "AI-powered chat and conversation endpoints",
+        },
+        {
+            "name": "Documents",
+            "description": "Document upload, retrieval, and management",
+        },
+        {
+            "name": "Web Crawler",
+            "description": "Website crawling and content extraction",
+        },
+        {
+            "name": "Webpages",
+            "description": "Webpage data retrieval and management",
+        },
+        {
+            "name": "Collections",
+            "description": "Collection statistics and management",
+        },
+    ]
 )
+
+# Add API key security scheme to OpenAPI
+app.openapi_components = {
+    "securitySchemes": add_api_key_to_docs()
+}
+
+# Global security requirement
+app.openapi_security = [{"ApiKeyAuth": []}]
 
 # Configure CORS
 app.add_middleware(
@@ -128,27 +163,36 @@ collection_router = APIRouter(
 # Core endpoints
 @core_router.get("/")
 async def root():
-    """Root endpoint."""
-    return {"message": "Welcome to GovStack API"}
+    """Root endpoint - Public access for basic connectivity testing."""
+    return {"message": "Welcome to GovStack API", "version": "0.1.0", "authentication": "X-API-Key header required for most endpoints"}
 
 @core_router.get("/health")
 async def health():
-    """Health check endpoint."""
-    return {"status": "healthy"}
+    """Health check endpoint - Public access for monitoring."""
+    return {"status": "healthy", "timestamp": datetime.now(timezone.utc).isoformat()}
 
-# Chat models are now defined in the chat_endpoints.py module
+@core_router.get("/api-info")
+async def api_info(api_key_info: APIKeyInfo = Depends(validate_api_key)):
+    """Get API key information and permissions."""
+    return {
+        "api_key_name": api_key_info.name,
+        "permissions": api_key_info.permissions,
+        "description": api_key_info.description
+    }
 
-# Document endpoints
+# Document endpoints - Updated with security
 @document_router.post("/", status_code=201)
 async def upload_document(
     file: UploadFile = File(...),
     description: str = Form(None),
     is_public: bool = Form(False),
     collection_id: Optional[str] = Form(None),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    api_key_info: APIKeyInfo = Depends(require_write_permission)
 ):
     """
     Upload a document to MinIO storage and save its metadata in the database.
+    Requires write permission.
     
     Args:
         file: The file to upload
@@ -214,10 +258,12 @@ async def upload_document(
 @document_router.get("/{document_id}")
 async def get_document(
     document_id: int,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    api_key_info: APIKeyInfo = Depends(require_read_permission)
 ):
     """
     Get document metadata and generate a presigned URL for access.
+    Requires read permission.
     
     Args:
         document_id: ID of the document to retrieve
@@ -255,10 +301,12 @@ async def get_document(
 async def list_documents(
     skip: int = 0,
     limit: int = 100,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    api_key_info: APIKeyInfo = Depends(require_read_permission)
 ):
     """
     List documents with pagination.
+    Requires read permission.
     
     Args:
         skip: Number of documents to skip (for pagination)
@@ -286,10 +334,12 @@ async def list_documents(
 @document_router.delete("/{document_id}")
 async def delete_document(
     document_id: int,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    api_key_info: APIKeyInfo = Depends(require_delete_permission)
 ):
     """
     Delete a document from both MinIO storage and the database.
+    Requires delete permission.
     
     Args:
         document_id: ID of the document to delete
@@ -384,10 +434,12 @@ crawl_tasks = {}
 async def start_crawl(
     request: CrawlWebsiteRequest,
     background_tasks: BackgroundTasks,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    api_key_info: APIKeyInfo = Depends(require_write_permission)
 ):
     """
     Start a website crawl operation in the background.
+    Requires write permission.
     
     Args:
         request: Crawl configuration
@@ -467,9 +519,13 @@ async def start_crawl(
         raise HTTPException(status_code=500, detail=f"Error starting crawl: {str(e)}")
 
 @crawler_router.get("/{task_id}", response_model=CrawlStatusResponse)
-async def get_crawl_status(task_id: str):
+async def get_crawl_status(
+    task_id: str,
+    api_key_info: APIKeyInfo = Depends(require_read_permission)
+):
     """
     Get the status of a crawl operation.
+    Requires read permission.
     
     Args:
         task_id: ID of the crawl task
@@ -505,9 +561,13 @@ async def get_crawl_status(task_id: str):
     )
 
 @webpage_router.post("/fetch-webpage/", response_model=WebpageFetchResponse)
-async def fetch_webpage(request: FetchWebpageRequest):
+async def fetch_webpage(
+    request: FetchWebpageRequest,
+    api_key_info: APIKeyInfo = Depends(require_read_permission)
+):
     """
     Fetch a single webpage and convert it to markdown.
+    Requires read permission.
     
     Args:
         request: Webpage fetch configuration
@@ -538,10 +598,12 @@ async def fetch_webpage(request: FetchWebpageRequest):
 async def list_webpages(
     skip: int = 0,
     limit: int = 50,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    api_key_info: APIKeyInfo = Depends(require_read_permission)
 ):
     """
     List webpages with pagination.
+    Requires read permission.
     
     Args:
         skip: Number of webpages to skip (for pagination)
@@ -577,10 +639,12 @@ async def get_webpage(
     webpage_id: int,
     include_content: bool = True,
     include_links: bool = False,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    api_key_info: APIKeyInfo = Depends(require_read_permission)
 ):
     """
     Get webpage details with optional content and links.
+    Requires read permission.
     
     Args:
         webpage_id: ID of the webpage to retrieve
@@ -633,10 +697,12 @@ async def get_webpages_by_collection(
     collection_id: str,
     limit: int = Query(100, ge=1, le=1000),
     offset: int = Query(0, ge=0),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    api_key_info: APIKeyInfo = Depends(require_read_permission)
 ):
     """
     Get all webpages in a specific collection.
+    Requires read permission.
     
     Args:
         collection_id: The collection ID to filter by
@@ -668,10 +734,12 @@ async def get_webpages_by_collection(
 @webpage_router.get("/by-url/", response_model=WebpageResponse)
 async def get_webpage_by_url(
     url: str = Query(..., description="The URL of the webpage to fetch"),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    api_key_info: APIKeyInfo = Depends(require_read_permission)
 ):
     """
     Get a webpage by its URL.
+    Requires read permission.
     
     Args:
         url: The URL of the webpage to fetch
@@ -706,10 +774,12 @@ async def get_webpage_by_url(
 @webpage_router.post("/extract-texts/", response_model=Union[str, List[Dict[str, Any]]])
 async def extract_texts_from_collection(
     request: CollectionTextRequest,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    api_key_info: APIKeyInfo = Depends(require_read_permission)
 ):
     """
     Extract text content from webpages in a specific collection.
+    Requires read permission.
     
     Args:
         request: Extraction configuration
@@ -733,10 +803,12 @@ async def extract_texts_from_collection(
 @collection_router.get("/{collection_id}", response_model=Dict[str, Any])
 async def get_collection_statistics(
     collection_id: str,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    api_key_info: APIKeyInfo = Depends(require_read_permission)
 ):
     """
     Get statistics about a specific collection.
+    Requires read permission.
     
     Args:
         collection_id: The collection ID to get stats for
@@ -758,10 +830,12 @@ async def get_collection_statistics(
 
 @collection_router.get("/", response_model=Dict[str, Any])
 async def get_all_collection_statistics(
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    api_key_info: APIKeyInfo = Depends(require_read_permission)
 ):
     """
     Get statistics about all collections.
+    Requires read permission.
     
     Args:
         db: Database session

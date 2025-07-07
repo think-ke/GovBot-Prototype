@@ -1,0 +1,183 @@
+version: '3.8'
+
+services:
+  # Main GovStack API (from your existing docker-compose.dev.yml)
+  api:
+    build:
+      args:
+        PIP_EXTRA_ARGS: "--no-cache-dir --no-binary=:all:"
+      context: ..
+      dockerfile: docker/api.dev.Dockerfile
+    ports:
+      - "5005:5005"
+    volumes:
+      - ../app:/app/app
+      - ../.env.dev:/app/.env
+    env_file:
+      - ../.env.dev
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://postgres:${POSTGRES_PASSWORD:-postgres}@postgres-test:5432/govstackdb
+      - MINIO_ENDPOINT=minio-test
+      - MINIO_PORT=9000
+      - MINIO_ACCESS_KEY=${MINIO_ACCESS_KEY:-minioadmin}
+      - MINIO_SECRET_KEY=${MINIO_SECRET_KEY:-minioadmin}
+      - MINIO_BUCKET_NAME=${MINIO_BUCKET_NAME:-govstack-docs}
+    depends_on:
+      postgres-test:
+        condition: service_healthy
+      chroma-test:
+        condition: service_started
+      minio-test:
+        condition: service_started
+    networks:
+      - govstack-test-network
+    restart: unless-stopped
+
+  # Test microservice
+  test-service:
+    build:
+      context: ..
+      dockerfile: tests/Dockerfile
+    ports:
+      - "8084:8080"
+    environment:
+      - API_BASE_URL=http://api:5005
+      - MAX_USERS=${MAX_USERS:-1000}
+      - DAILY_USERS=${DAILY_USERS:-40000}
+      - SPAWN_RATE=${SPAWN_RATE:-10}
+      - TEST_DURATION=${TEST_DURATION:-300}
+      - MAX_MEMORY_MB=${MAX_MEMORY_MB:-2048}
+      - MAX_RESPONSE_TIME_MS=${MAX_RESPONSE_TIME_MS:-2000}
+      - MIN_SUCCESS_RATE=${MIN_SUCCESS_RATE:-0.95}
+      - ENABLE_PROMETHEUS=true
+      - PROMETHEUS_PORT=8000
+    depends_on:
+      - api
+    networks:
+      - govstack-test-network
+    volumes:
+      - ./results:/app/results  # Mount volume for test results
+    restart: unless-stopped
+
+  # Database for testing
+  postgres-test:
+    image: postgres:17.5
+    ports:
+      - "5434:5432"
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DB: govstackdb
+    volumes:
+      - postgres-test-data:/var/lib/postgresql/data
+    networks:
+      - govstack-test-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # Chroma for testing
+  chroma-test:
+    image: chromadb/chroma:1.0.10.dev32
+    volumes:
+      - chroma-test-data:/chroma/chroma
+      - ../server.htpasswd:/chroma/server.htpasswd:ro
+    ports:
+      - "${CHROMA_TEST_PORT:-8002}:8000"
+    environment:
+      - AUTH_CREDENTIALS_FILE=/chroma/server.htpasswd
+      - AUTH_PROVIDER=basic
+      - ALLOW_RESET=TRUE
+      - ANONYMIZED_TELEMETRY=FALSE
+    networks:
+      - govstack-test-network
+    restart: unless-stopped
+
+  # MinIO for testing
+  minio-test:
+    image: minio/minio:latest
+    volumes:
+      - minio-test-data:/data
+    ports:
+      - "${MINIO_TEST_PORT:-9002}:9000"
+      - "${MINIO_CONSOLE_TEST_PORT:-9092}:9001"
+    environment:
+      - MINIO_ROOT_USER=${MINIO_ACCESS_KEY:-minioadmin}
+      - MINIO_ROOT_PASSWORD=${MINIO_SECRET_KEY:-minioadmin}
+    command: server /data --console-address ":9001"
+    networks:
+      - govstack-test-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 30s
+      timeout: 20s
+      retries: 3
+    restart: unless-stopped
+
+  # Prometheus for monitoring (optional)
+  prometheus:
+    image: prom/prometheus:latest
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+    networks:
+      - govstack-test-network
+    restart: unless-stopped
+
+  # Grafana for visualization (optional)
+  grafana:
+    image: grafana/grafana:latest
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_PASSWORD:-admin}
+    volumes:
+      - grafana-data:/var/lib/grafana
+    networks:
+      - govstack-test-network
+    restart: unless-stopped
+
+  # Redis for test coordination (optional)
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    networks:
+      - govstack-test-network
+    restart: unless-stopped
+
+networks:
+  govstack-test-network:
+    driver: bridge
+    name: govstack-testing-network
+
+volumes:
+  postgres-test-data:
+    driver: local
+    name: govstack-testing-postgres-data
+  chroma-test-data:
+    driver: local
+    name: govstack-testing-chroma-data
+  minio-test-data:
+    driver: local
+    name: govstack-testing-minio-data
+  prometheus-data:
+    driver: local
+    name: govstack-testing-prometheus-data
+  grafana-data:
+    driver: local
+    name: govstack-testing-grafana-data
+  redis-data:
+    driver: local
+    name: govstack-testing-redis-data

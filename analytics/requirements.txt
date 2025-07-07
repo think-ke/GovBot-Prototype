@@ -1,0 +1,18 @@
+# Analytics Service Requirements
+fastapi==0.115.9
+uvicorn[standard]==0.34.2
+sqlalchemy==2.0.41
+asyncpg==0.30.0
+pydantic==2.11.7
+pydantic-settings==2.9.1
+python-multipart==0.0.20
+python-dateutil==2.9.0.post0
+
+# Development dependencies
+pytest==8.4.1
+pytest-asyncio==1.0.0
+pytest-cov==6.2.1
+httpx==0.28.1
+
+# Optional: Additional useful packages
+aiosqlite==0.21.0

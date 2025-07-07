@@ -4,29 +4,50 @@ GovStack is an intelligent document management and citizen assistance system des
 
 ## Features
 
-- AI-powered assistance for eCitizen services in Kenya using PydanticAI agents
-- RAG (Retrieval Augmented Generation) capabilities for accurate information retrieval
-- Document upload, storage, and retrieval with semantic search
-- Web crawling capabilities for automatic information gathering
-- Collection-based organization of documents and web content
-- Conversation history persistence with the ability to continue conversations
-- MinIO integration for scalable object storage
-- ChromaDB for vector database capabilities
-- PostgreSQL for relational data storage
-- Docker-based deployment for production and development environments
-- Fully containerized architecture for easy deployment across environments
+### Core Features
+- **AI-powered assistance** for eCitizen services in Kenya using PydanticAI agents
+- **RAG (Retrieval Augmented Generation)** capabilities for accurate information retrieval
+- **Document management** with upload, storage, and retrieval using semantic search
+- **Web crawling** capabilities for automatic information gathering
+- **Collection-based organization** of documents and web content
+- **Conversation history persistence** with the ability to continue conversations
+- **Token usage tracking** for OpenAI API cost monitoring and projections
+
+### Infrastructure & Storage
+- **MinIO integration** for scalable object storage
+- **ChromaDB** for vector database capabilities with authentication
+- **PostgreSQL** for relational data storage with automated backups
+- **Metabase** for business intelligence and data visualization
+- **Docker-based deployment** for production and development environments
+- **Fully containerized architecture** for easy deployment across environments
+
+### Backup & Recovery
+- **Automated database backups** with configurable retention policies
+- **Graceful shutdown** with automatic backup creation
+- **Manual backup tools** for on-demand database snapshots
+- **Disaster recovery procedures** with comprehensive restore capabilities
+
+### Testing & Scalability
+- **Comprehensive testing suite** for performance and scalability validation
+- **Load testing** supporting up to 1000 concurrent users and 40,000 daily users
+- **External API testing** capabilities for testing against remote deployments
+- **Token usage tracking** and cost projection for scaling scenarios
+- **Performance monitoring** with Prometheus and Grafana integration
 
 ## Prerequisites
 
-- Docker and Docker Compose v2.x+
-- For local development:
+- **Docker and Docker Compose v2.x+**
+- **For local development:**
   - Python 3.11+ (required for compatibility with dependencies)
   - Git
-  - 4GB+ RAM available for running containers
+  - 4GB+ RAM available for running containers (8GB+ recommended for testing)
   - 20GB+ free disk space for databases and document storage
-- For API access:
+- **For API access:**
   - Valid OpenAI API key for LLM functionality
   - Optional: Additional API keys as specified in .env.example
+- **For scalability testing:**
+  - Additional RAM and CPU cores (16GB RAM, 8 CPU cores for 1000+ concurrent users)
+  - Network connectivity for external API testing
 
 ## Quick Start
 
@@ -96,14 +117,38 @@ This diagram illustrates the core components and data flow of the GovStack syste
 - **MinIO Object Storage**:
   - Production API: http://localhost:9000
   - Production Console: http://localhost:9001
-  - Development API: http://localhost:9090
-  - Development Console: http://localhost:9091
+  - Development API: http://localhost:9002
+  - Development Console: http://localhost:9092
   - Default credentials: minioadmin/minioadmin (unless changed in .env)
 
 - **PostgreSQL**:
   - Production Port: 5432
   - Development Port: 5433
   - Default credentials: postgres/postgres (unless changed in .env)
+
+- **Analytics Module**:
+  - Production API: http://localhost:8005
+  - Development API: http://localhost:8006
+  - API Documentation: http://localhost:8005/docs
+  - Health Check: http://localhost:8005/analytics/health
+
+- **Analytics Dashboard**:
+  - Production Web Interface: http://localhost:3001
+  - Development Web Interface: http://localhost:3002
+  - Health Check: http://localhost:3001/api/health (production) or http://localhost:3002/api/health (development)
+  - Real-time analytics visualization and business intelligence
+
+- **Metabase Analytics**:
+  - Web Interface: http://localhost:3000
+  - API Health Check: http://localhost:3000/api/health
+  - Database: Uses PostgreSQL `metabase` database for application data
+  - Setup: Complete initial setup wizard on first access
+
+- **Testing Infrastructure**:
+  - Test Service UI: http://localhost:8084 (when running tests)
+  - Prometheus Monitoring: http://localhost:9090 (when running tests)
+  - Grafana Dashboard: http://localhost:3000 (when running tests)
+  - Locust Load Testing UI: http://localhost:8089 (when running load tests)
 
 ## API Documentation
 
@@ -270,34 +315,99 @@ govstack/
 │   ├── api/              # API endpoints and FastAPI application
 │   │   ├── fast_api_app.py  # Main FastAPI application entry point
 │   │   └── endpoints/    # API endpoint modules organized by feature
+│   │       ├── chat_endpoints.py     # Chat and conversation endpoints
+│   │       └── webpage_endpoints.py  # Web crawling and webpage endpoints
 │   ├── core/             # Core business logic
 │   │   ├── crawlers/     # Web crawling components
+│   │   │   ├── web_crawler.py  # Main web crawler implementation
+│   │   │   └── utils.py        # Crawler utility functions
 │   │   ├── orchestrator.py  # Central orchestration of AI agents
 │   │   └── rag/          # Retrieval Augmented Generation components
+│   │       ├── indexer.py      # Vector indexing for RAG
+│   │       ├── tool_loader.py  # Tool loading utilities
+│   │       └── README.md       # RAG system documentation
 │   ├── db/               # Database models and utilities
+│   │   ├── database.py   # Database configuration and connection
 │   │   └── models/       # SQLAlchemy ORM models
+│   │       ├── chat.py      # Chat sessions and message models
+│   │       ├── document.py  # Document storage models
+│   │       └── webpage.py   # Webpage and crawling models
+│   ├── models/           # Additional model definitions
 │   └── utils/            # Utility functions and shared code
-│       ├── prompts.py    # LLM prompt templates
-│       └── storage.py    # Storage utilities (MinIO interface)
+│       ├── chat_persistence.py  # Chat history persistence
+│       ├── prompts.py           # LLM prompt templates
+│       ├── storage.py           # Storage utilities (MinIO interface)
+│       └── README_chat_persistence.md  # Chat persistence documentation
+├── backups/              # Database backup storage
+│   └── prod/            # Production database backups
+├── data/                 # Persistent data storage (created by containers)
+│   ├── backups/         # Database backup files
+│   ├── backups-dev/     # Development database backups
+│   ├── chroma/          # ChromaDB vector database files
+│   ├── chroma-dev/      # Development ChromaDB files
+│   ├── minio/           # MinIO object storage
+│   ├── minio-dev/       # Development MinIO storage
+│   ├── postgres/        # PostgreSQL database files
+│   └── postgres-dev/    # Development PostgreSQL files
 ├── docker/               # Docker configuration files
 │   ├── api.Dockerfile    # Production API container definition
-│   └── api.dev.Dockerfile # Development API container definition
+│   ├── api.dev.Dockerfile # Development API container definition
+│   └── backup.Dockerfile # Database backup container definition
+├── docs/                 # Documentation files
+│   ├── dqf.md           # Data Quality Framework documentation
+│   ├── GovStack_Detailed_Presentation_Slides.md
+│   ├── GovStack_Technical_Architecture_Presentation.md
+│   ├── implementation_status.md  # Implementation status tracking
+│   └── technical_design.md       # Technical design documentation
+├── examples/             # Example code and usage
+│   └── chat_api_examples.md  # Chat API usage examples
 ├── scripts/              # Utility scripts for operations and maintenance
-│   ├── add_collection_id_column.py  # Database migration script
-│   ├── add_indexing_columns.py      # Database migration script
-│   ├── run_indexing.py              # Script to run RAG indexing
+│   ├── __init__.py      # Python package initialization
+│   ├── add_chat_tables.py           # Chat table migration script
+│   ├── add_collection_id_column.py  # Collection ID migration script
+│   ├── add_indexing_columns.py      # Indexing columns migration script
+│   ├── backup_service.sh            # Backup service script
+│   ├── check_indexing_status.py     # Indexing status checker
+│   ├── migrate_chat_tables.py       # Chat table migration
+│   ├── postgres_backup.sh           # PostgreSQL backup script
+│   ├── run_indexing.py              # RAG indexing runner
+│   ├── run_migration.py             # Database migration runner
+│   ├── test_chat_persistence.py     # Chat persistence tests
+│   ├── test_new_chat_persistence.py # New chat persistence tests
 │   └── update_webpage_collections.py # Collection management script
-├── data/                 # Persistent data storage (created by containers)
-│   ├── chroma/           # ChromaDB vector database files
-│   ├── minio/            # MinIO object storage
-│   └── postgres/         # PostgreSQL database files
+├── storage/              # Additional storage utilities
+├── tests/                # Comprehensive testing suite
+│   ├── cli.py           # Command-line interface for tests
+│   ├── config.py        # Test configuration
+│   ├── run_tests.sh     # Test execution script
+│   ├── requirements.txt # Test dependencies
+│   ├── Dockerfile       # Test container definition
+│   ├── docker-compose.test.yml      # Test environment Docker config
+│   ├── docker-compose.external.yml  # External testing Docker config
+│   ├── .env.test        # Test environment variables
+│   ├── .env.external    # External testing environment variables
+│   ├── prometheus.yml   # Prometheus monitoring config
+│   ├── prometheus.external.yml # External Prometheus config
+│   ├── integration_tests/  # Integration test suite
+│   ├── load_tests/         # Load and performance tests
+│   ├── scalability_tests/  # Scalability testing
+│   ├── unit_tests/         # Unit test suite
+│   ├── utils/              # Test utilities
+│   ├── results/            # Test result storage
+│   ├── README.md           # Testing documentation
+│   └── EXTERNAL_TESTING.md # External testing guide
 ├── .env                  # Environment variables for production
+├── .env.dev              # Development environment variables
 ├── .env.example          # Example environment configuration
+├── .gitignore            # Git ignore patterns
 ├── requirements.txt      # Python dependencies
 ├── docker-compose.yml    # Production Docker configuration
 ├── docker-compose.dev.yml  # Development Docker configuration
+├── docker_inspector.sh  # Docker inspection utility
 ├── server.htpasswd       # ChromaDB authentication file
-└── README.md             # Project documentation
+├── shutdown_with_backup.sh  # Graceful shutdown with backup script
+├── README.md             # Project documentation
+└── README_DATABASE_BACKUPS.md  # Database backup documentation
 ```
 
 ### Key Components
@@ -409,6 +519,8 @@ GovStack is designed to be deployed easily using Docker in various environments.
 - 20GB+ storage space for the database and document storage
 - Port 5000 available for the API service
 - Ports 8050, 9000, 9001, and 5432 available for supporting services
+- Ports 8005-8006 available for analytics services
+- Ports 3001-3002 available for analytics dashboard
 
 ### Cloud Deployment Options
 
@@ -637,11 +749,260 @@ For large vector collections:
 
 2. Consider sharding the vector database for very large collections
 
+## Backup and Disaster Recovery
+
+GovStack includes a comprehensive backup and disaster recovery system to protect your data and ensure business continuity.
+
+### Automated Database Backups
+
+GovStack automatically backs up your PostgreSQL database using dedicated backup containers:
+
+#### Production Environment
+- **Schedule**: Daily at 2:00 AM
+- **Retention**: 30 days
+- **Location**: `./backups/prod/`
+- **Service**: `backup` service in docker-compose.yml
+
+#### Development Environment  
+- **Schedule**: Every 6 hours
+- **Retention**: 7 days
+- **Location**: `./data/backups-dev/`
+- **Service**: `backup-dev` service in docker-compose.dev.yml
+
+### Manual Backup Operations
+
+Create manual backups using the provided scripts:
+
+```bash
+# Create a manual backup for production
+./scripts/postgres_backup.sh prod manual
+
+# Create a manual backup for development
+./scripts/postgres_backup.sh dev manual
+```
+
+### Graceful Shutdown with Backup
+
+Always use the graceful shutdown script to ensure a backup is created before stopping services:
+
+```bash
+# Shutdown production with backup
+./shutdown_with_backup.sh prod
+
+# Shutdown development with backup
+./shutdown_with_backup.sh dev
+```
+
+This script will:
+1. Create a final database backup
+2. Gracefully stop services in dependency order
+3. Provide backup confirmation with file location
+
+### Backup File Format
+
+Backup files follow a consistent naming pattern:
+```
+govstackdb_{environment}_{type}_{timestamp}.sql.gz
+```
+
+**Examples:**
+- `govstackdb_prod_scheduled_20250626_020000.sql.gz`
+- `govstackdb_dev_manual_20250626_140530.sql.gz`
+- `govstackdb_prod_shutdown_20250626_180000.sql.gz`
+
+### Disaster Recovery Procedures
+
+#### Complete System Restore
+
+1. **Stop all services:**
+   ```bash
+   docker compose down  # or docker compose -f docker-compose.dev.yml down
+   ```
+
+2. **Restore database from backup:**
+   ```bash
+   # Extract the backup file
+   gunzip data/backups/govstackdb_prod_shutdown_20250626_180000.sql.gz
+   
+   # Start only the database service
+   docker compose up -d postgres
+   
+   # Restore the database
+   docker exec -i govstack-server-postgres-1 psql -U postgres -d govstackdb < data/backups/govstackdb_prod_shutdown_20250626_180000.sql
+   ```
+
+3. **Restore file storage (if needed):**
+   ```bash
+   # Restore MinIO data from backup
+   rsync -avz /path/to/backup/minio/ ./data/minio/
+   
+   # Restore ChromaDB vectors from backup
+   rsync -avz /path/to/backup/chroma/ ./data/chroma/
+   ```
+
+4. **Start all services:**
+   ```bash
+   docker compose up -d
+   ```
+
+#### Monitoring Backup Health
+
+Check backup service status and logs:
+
+```bash
+# Production backup logs
+docker logs govstack-server-backup-1
+
+# Development backup logs  
+docker logs govstack-test-server-backup-dev-1
+
+# Check backup service status
+docker compose ps backup
+```
+
+### Backup Best Practices
+
+- **Regular Testing**: Test restore procedures regularly
+- **Off-site Storage**: Copy backups to remote storage for disaster recovery
+- **Monitoring**: Set up alerts for backup failures
+- **Documentation**: Keep restore procedures documented and accessible
+
+For detailed backup configuration, see [README_DATABASE_BACKUPS.md](./README_DATABASE_BACKUPS.md).
+
+## Token Usage Tracking & Cost Management
+
+GovStack includes comprehensive token usage tracking to help you monitor and project OpenAI API costs:
+
+### Automatic Token Tracking
+
+All API requests automatically track:
+- **Request tokens**: Input tokens sent to the LLM
+- **Response tokens**: Output tokens generated by the LLM  
+- **Total tokens**: Combined token usage
+- **Cost estimates**: Based on current OpenAI pricing
+
+### Supported Models & Pricing
+
+The system tracks costs for:
+- **GPT-4**: $0.03 input / $0.06 output per 1K tokens
+- **GPT-4 Turbo**: $0.005 input / $0.015 output per 1K tokens
+- **GPT-3.5 Turbo**: $0.001 input / $0.002 output per 1K tokens
+- **Embeddings**: $0.00002 per 1K tokens
+
+### Usage Analytics
+
+Token usage data includes:
+- **Timestamp tracking**: When each request was made  
+- **Model identification**: Which LLM model was used
+- **Request correlation**: Link usage to specific chat sessions
+- **Cost projections**: Estimate monthly/daily costs based on usage patterns
+
+### Scalability Cost Projections
+
+For scaling planning, the system can project costs for:
+- **1,000 concurrent users**: Estimated monthly API costs
+- **40,000 daily users**: Daily and monthly usage projections
+- **Peak load scenarios**: Cost implications of high-traffic periods
+
+## Scalability Testing Suite
+
+GovStack includes a comprehensive testing infrastructure to validate performance at scale.
+
+### Testing Capabilities
+
+The testing suite can simulate:
+- **Up to 1,000 concurrent users**
+- **40,000 daily users** with realistic usage patterns
+- **Performance benchmarking** under various load conditions
+- **External API testing** against remote deployments
+
+### Test Types Available
+
+#### Load Testing Scenarios
+- **Baseline Performance**: Single-user performance metrics
+- **Concurrent Users**: 10, 25, 50, 100, 250, 500, 1000 concurrent users  
+- **Daily Load Simulation**: Realistic usage patterns throughout the day
+- **Stress Testing**: Push the system beyond normal limits
+- **Memory & Latency Analysis**: Resource usage and response time tracking
+
+#### Key Metrics Measured
+- **Response Times**: Average, median, P95, P99, maximum
+- **Success Rates**: Request success/failure ratios
+- **Memory Usage**: RAM consumption patterns over time
+- **Token Usage**: OpenAI API costs and usage projections
+- **Throughput**: Requests per second capacity
+- **Network Latency**: Connection and processing delays
+
+### Running Performance Tests
+
+#### Quick Performance Check
+```bash
+cd tests/
+./run_tests.sh quick-check
+```
+
+#### Full Scalability Test Suite
+```bash
+# Run all test types
+cd tests/
+./run_tests.sh run-tests
+
+# Run specific test types
+./run_tests.sh run-tests --test-types baseline,concurrent --max-users 500
+```
+
+#### Interactive Load Testing
+```bash
+# Start Locust web UI for manual testing control
+cd tests/
+./run_tests.sh locust-ui
+# Then open http://localhost:8089
+```
+
+### External API Testing
+
+Test against existing GovStack deployments without running local services:
+
+#### Setup External Testing
+```bash
+cd tests/
+# Configure target server
+nano .env.external  # Set EXTERNAL_API_URL=http://your-server:5005
+
+# Start external test environment
+./run_tests.sh start-external
+
+# Run tests against external server
+./run_tests.sh run-tests --api-url http://your-server:5005
+```
+
+### Monitoring & Analytics
+
+The testing infrastructure includes:
+- **Prometheus**: Metrics collection and storage
+- **Grafana**: Performance visualization dashboards  
+- **Real-time monitoring**: Live performance metrics during tests
+- **Test result storage**: Historical test run data
+- **Automated reporting**: Performance summaries and recommendations
+
+### Test Environment Requirements
+
+#### Minimum Requirements
+- 4GB RAM, 2 CPU cores
+- Docker and Docker Compose
+
+#### Recommended for Full Scale Testing  
+- 16GB RAM, 8 CPU cores
+- SSD storage for database performance
+- Stable network connection for external testing
+
+For detailed testing documentation, see [tests/README.md](./tests/README.md).
+
 ## Backup and Restore
 
-### Creating Backups
+### Legacy Backup Commands
 
-Regularly back up all data for disaster recovery:
+For additional backup operations, you can also use these direct commands:
 
 ```bash
 # Back up PostgreSQL database
@@ -654,7 +1015,7 @@ rsync -avz ./data/minio /path/to/backup/
 rsync -avz ./data/chroma /path/to/backup/
 ```
 
-### Restoring from Backup
+### Legacy Restore Commands
 
 ```bash
 # Restore PostgreSQL database
@@ -665,6 +1026,295 @@ rsync -avz /path/to/backup/minio/ ./data/minio/
 rsync -avz /path/to/backup/chroma/ ./data/chroma/
 ```
 
+**Note**: The automated backup system described above is the recommended approach for production use.
+
 ## License
 
 This project is proprietary and confidential.
+
+# GovStack API
+
+GovStack is a comprehensive document management and AI-powered chat API that provides secure access to government information and services through intelligent conversation and document processing capabilities.
+
+## Features
+
+- **AI-Powered Chat**: Intelligent conversations with government data using advanced language models
+- **Document Management**: Secure upload, storage, and retrieval of documents
+- **Web Crawling**: Automated website crawling and content extraction
+- **API Key Security**: Role-based access control with read, write, and delete permissions
+- **Collection Management**: Organize and manage document collections with statistics
+- **Vector Search**: Advanced semantic search capabilities using ChromaDB
+
+## Quick Start
+
+### Environment Setup
+
+1. Copy the environment configuration:
+```bash
+cp .env.example .env.dev
+```
+
+2. Update the configuration in `.env.dev` with your API keys:
+```bash
+# Required API Keys
+OPENAI_API_KEY="your-openai-api-key-here"
+EXA_API_KEY="your-exa-api-key-here"
+
+# API Security - Change these in production!
+GOVSTACK_API_KEY="your-secure-master-api-key-here"
+GOVSTACK_ADMIN_API_KEY="your-secure-admin-api-key-here"
+```
+
+### Authentication
+
+All API endpoints (except `/` and `/health`) require API key authentication via the `X-API-Key` header:
+
+```bash
+curl -H "X-API-Key: your-api-key-here" http://localhost:5000/api-info
+```
+
+#### API Key Permissions
+
+- **Master Key** (`GOVSTACK_API_KEY`): Full access (read, write, delete)
+- **Admin Key** (`GOVSTACK_ADMIN_API_KEY`): Read and write access
+- Custom keys can be configured with specific permissions
+
+### Core Endpoints
+
+#### Health Check
+```bash
+# Public endpoint - no authentication required
+GET /health
+```
+
+#### API Information
+```bash
+# Get your API key permissions
+GET /api-info
+Headers: X-API-Key: your-api-key-here
+```
+
+### Chat API
+
+#### Start a Conversation
+```bash
+POST /chat/
+Content-Type: application/json
+X-API-Key: your-api-key-here
+
+{
+  "message": "What services does the government provide for business registration?",
+  "session_id": "optional-session-id",
+  "user_id": "user123"
+}
+```
+
+#### Get Chat History
+```bash
+GET /chat/{session_id}
+X-API-Key: your-api-key-here
+```
+
+#### Delete Chat Session
+```bash
+DELETE /chat/{session_id}
+X-API-Key: your-api-key-here
+```
+
+### Document Management
+
+#### Upload Document
+```bash
+POST /documents/
+X-API-Key: your-api-key-here
+Content-Type: multipart/form-data
+
+# Form fields:
+# - file: Document file
+# - description: Optional description
+# - is_public: Boolean (default: false)
+# - collection_id: Optional collection identifier
+```
+
+#### Get Document
+```bash
+GET /documents/{document_id}
+X-API-Key: your-api-key-here
+```
+
+#### List Documents
+```bash
+GET /documents/?skip=0&limit=100
+X-API-Key: your-api-key-here
+```
+
+### Web Crawling
+
+#### Start Website Crawl
+```bash
+POST /crawl/
+Content-Type: application/json
+X-API-Key: your-api-key-here
+
+{
+  "url": "https://example.gov",
+  "depth": 3,
+  "concurrent_requests": 10,
+  "collection_id": "gov-docs"
+}
+```
+
+#### Check Crawl Status
+```bash
+GET /crawl/{task_id}
+X-API-Key: your-api-key-here
+```
+
+#### Fetch Single Webpage
+```bash
+POST /webpages/fetch-webpage/
+Content-Type: application/json
+X-API-Key: your-api-key-here
+
+{
+  "url": "https://example.gov/page",
+  "skip_ssl_verification": false
+}
+```
+
+### Collection Management
+
+#### Get Collection Statistics
+```bash
+GET /collection-stats/{collection_id}
+X-API-Key: your-api-key-here
+```
+
+#### Get All Collections
+```bash
+GET /collection-stats/
+X-API-Key: your-api-key-here
+```
+
+## Environment Variables
+
+### Core Settings
+```bash
+USE_GPU=false                    # Enable GPU acceleration
+DOCKER_RUNTIME=runc             # Docker runtime
+DEV_MODE=true                   # Development mode
+LOG_LEVEL=DEBUG                 # Logging level
+```
+
+### API Keys
+```bash
+OPENAI_API_KEY="sk-..."         # OpenAI API key
+EXA_API_KEY="xxx-xxx-xxx"       # Exa search API key
+GOVSTACK_API_KEY="master-key"   # Master API key (full access)
+GOVSTACK_ADMIN_API_KEY="admin-key" # Admin API key (read/write)
+```
+
+### Database Configuration
+```bash
+POSTGRES_PASSWORD=your-password
+DATABASE_URL=postgresql+asyncpg://postgres:password@postgres-dev:5432/govstackdb
+```
+
+### ChromaDB Configuration
+```bash
+CHROMA_HOST=chroma-dev
+CHROMA_PORT=8000
+CHROMA_USERNAME=your-username
+CHROMA_PASSWORD=your-password
+CHROMA_CLIENT_AUTHN_CREDENTIALS=username:password
+CHROMA_DEV_PORT=8001
+```
+
+### MinIO Configuration
+```bash
+MINIO_ACCESS_KEY=your-access-key
+MINIO_SECRET_KEY=your-secret-key
+MINIO_BUCKET_NAME=govstack-docs
+MINIO_DEV_PORT=9001
+MINIO_CONSOLE_DEV_PORT=9091
+```
+
+## Security
+
+### API Key Authentication
+- All endpoints require valid API keys via `X-API-Key` header
+- Different permission levels: read, write, delete
+- Keys are validated against environment variables
+
+### Permission Levels
+- **Read**: Access to GET endpoints, chat history, document retrieval
+- **Write**: Document upload, chat interactions, crawl operations
+- **Delete**: Resource deletion capabilities
+
+### Best Practices
+1. Use different API keys for different applications
+2. Rotate API keys regularly
+3. Store API keys securely (environment variables, secret management)
+4. Monitor API usage through logs
+5. Use HTTPS in production
+
+## Response Formats
+
+### Success Response
+```json
+{
+  "session_id": "uuid",
+  "answer": "Response text",
+  "sources": [...],
+  "confidence": 0.95,
+  "usage": {...}
+}
+```
+
+### Error Response
+```json
+{
+  "detail": "Error message",
+  "status_code": 400
+}
+```
+
+## Development
+
+### Running Locally
+```bash
+# Install dependencies
+pip install -r requirements.txt
+
+# Set up environment
+cp .env.example .env.dev
+
+# Run the application
+python -m app.api.fast_api_app
+```
+
+### Docker Development
+```bash
+# Build and run with docker-compose
+docker-compose up -d
+```
+
+## API Documentation
+
+Once running, visit:
+- Swagger UI: `http://localhost:5000/docs`
+- ReDoc: `http://localhost:5000/redoc`
+
+## Monitoring and Logging
+
+The application uses structured logging with configurable levels. All API requests are logged with trace IDs for debugging.
+
+### Log Levels
+- `DEBUG`: Detailed debugging information
+- `INFO`: General operational messages
+- `WARNING`: Warning messages
+- `ERROR`: Error conditions
+
+## Support
+
+For issues and questions, please check the logs and ensure proper API key configuration.

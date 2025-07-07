@@ -1,0 +1,20 @@
+global:
+  scrape_interval: 15s
+
+scrape_configs:
+  - job_name: 'test-service'
+    static_configs:
+      - targets: ['test-service:8000']
+    metrics_path: '/metrics'
+    scrape_interval: 5s
+
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']
+
+  # Optional: If the external API exposes metrics, add it here
+  # - job_name: 'external-govstack-api'
+  #   static_configs:
+  #     - targets: ['192.168.1.100:5005']  # Replace with your server IP
+  #   metrics_path: '/metrics'
+  #   scrape_interval: 5s

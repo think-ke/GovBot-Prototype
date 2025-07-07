@@ -40,8 +40,11 @@ services:
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-postgres}
       - POSTGRES_USER=postgres
       - POSTGRES_DB=govstackdb
+      # Create additional database for Metabase
+      - POSTGRES_MULTIPLE_DATABASES=govstackdb,metabase
     volumes:
       - ./data/postgres:/var/lib/postgresql/data
+      - ./scripts/postgres-init:/docker-entrypoint-initdb.d
     ports:
       - "5432:5432"
     networks:
@@ -52,6 +55,26 @@ services:
       timeout: 5s
       retries: 5
 
+  backup:
+    build:
+      context: .
+      dockerfile: docker/backup.Dockerfile
+    environment:
+      - POSTGRES_HOST=postgres
+      - POSTGRES_PORT=5432
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-postgres}
+      - POSTGRES_DB=govstackdb
+      - BACKUP_SCHEDULE=0 2 * * *     # Daily at 2 AM for production
+      - BACKUP_RETENTION_DAYS=30      # Keep 30 days for production
+    volumes:
+      - ./backups/prod:/backups
+    depends_on:
+      - postgres
+    networks:
+      - govstack-net
+    restart: unless-stopped
+
   chroma:
     image: chromadb/chroma:1.0.10.dev32
     ports:
@@ -60,7 +83,7 @@ services:
       - CHROMA_SERVER_AUTHN_CREDENTIALS_FILE=/chroma/server.htpasswd
       - CHROMA_SERVER_AUTHN_PROVIDER=chromadb.auth.basic_authn.BasicAuthenticationServerProvider
     volumes:
-      - ./data/chroma:/chroma/chroma:rw
+      - ./data/chroma:/data:rw
       - ./server.htpasswd:/chroma/server.htpasswd:ro
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/api/v1/heartbeat"]
@@ -88,6 +111,83 @@ services:
       interval: 30s
       timeout: 20s
       retries: 3
+    restart: unless-stopped
+
+  analytics:
+    build:
+      context: .
+      dockerfile: analytics/Dockerfile
+    ports:
+      - "${ANALYTICS_PORT:-8005}:8005"
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://postgres:${POSTGRES_PASSWORD:-postgres}@postgres:5432/govstackdb
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - govstack-net
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8005/analytics/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped
+
+  analytics-dashboard:
+    build:
+      context: ./analytics-dashboard
+      dockerfile: Dockerfile
+    ports:
+      - "${ANALYTICS_DASHBOARD_PORT:-3001}:3000"
+    environment:
+      - NODE_ENV=production
+      - NEXT_TELEMETRY_DISABLED=1
+      - ANALYTICS_API_URL=http://analytics:8005
+    depends_on:
+      - analytics
+    networks:
+      - govstack-net
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped
+
+  metabase:
+    image: metabase/metabase:latest
+    container_name: metabase
+    ports:
+      - "${METABASE_PORT:-3000}:3000"
+    environment:
+      # Use PostgreSQL as the application database
+      - MB_DB_TYPE=postgres
+      - MB_DB_DBNAME=metabase
+      - MB_DB_PORT=5432
+      - MB_DB_USER=postgres
+      - MB_DB_PASS=${POSTGRES_PASSWORD:-postgres}
+      - MB_DB_HOST=postgres
+      # Java heap settings for performance (recommended 2GB for production)
+      - JAVA_OPTS=-Xmx2g -Xms1g
+      # Optional: Encryption secret key for security
+      - MB_ENCRYPTION_SECRET_KEY=${METABASE_ENCRYPTION_SECRET_KEY:-}
+      # Optional: Site URL for email links
+      - MB_SITE_URL=${METABASE_SITE_URL:-http://localhost:3000}
+    volumes:
+      - ./data/metabase:/metabase-data
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - govstack-net
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 120s  # Metabase takes time to initialize
     restart: unless-stopped
 
 volumes:

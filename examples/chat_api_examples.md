@@ -1,6 +1,23 @@
 # GovStack Chat API Examples
 
-This document provides examples of how to use the GovStack Chat API endpoints.
+This document provides examples of how to use the GovStack Chat API endpoints with API key authentication.
+
+## Authentication
+
+All API endpoints (except `/` and `/health`) require authentication using an API key in the `X-API-Key` header.
+
+### Development API Keys
+
+For development and testing, use these default API keys:
+
+- **Master Key**: `gs-dev-master-key-12345` (full access)
+- **Admin Key**: `gs-dev-admin-key-67890` (read, write, admin)
+
+### Production API Keys
+
+In production, set these environment variables:
+- `GOVSTACK_API_KEY`: Master API key with full permissions
+- `GOVSTACK_ADMIN_API_KEY`: Admin API key with management permissions
 
 ## Chat API Endpoint
 
@@ -18,6 +35,7 @@ To start a new conversation, send a POST request to the chat endpoint without pr
 ```http
 POST /chat
 Content-Type: application/json
+X-API-Key: gs-dev-master-key-12345
 
 {
   "message": "What documents are available about agriculture policies?",
@@ -53,6 +71,7 @@ To continue an existing conversation, include the `session_id` from the previous
 ```http
 POST /chat
 Content-Type: application/json
+X-API-Key: gs-dev-master-key-12345
 
 {
   "message": "Can you summarize the key points?",
@@ -88,6 +107,7 @@ You can retrieve the history of a chat session by making a GET request with the 
 
 ```http
 GET /chat/5f9b5b7e-8f0c-4a3c-9d8f-5f9b5b7e8f0c
+X-API-Key: gs-dev-master-key-12345
 ```
 
 ### Response
@@ -171,6 +191,7 @@ To delete a chat session and all its messages, send a DELETE request with the se
 
 ```http
 DELETE /chat/5f9b5b7e-8f0c-4a3c-9d8f-5f9b5b7e8f0c
+X-API-Key: gs-dev-master-key-12345
 ```
 
 ### Response
@@ -190,6 +211,7 @@ You can include additional metadata with your chat requests to provide more cont
 ```http
 POST /chat
 Content-Type: application/json
+X-API-Key: gs-dev-master-key-12345
 
 {
   "message": "Tell me about sustainable farming practices",
@@ -212,6 +234,7 @@ Here are examples of conversations related to the Kenya Film Classification Boar
 ```http
 POST /chat
 Content-Type: application/json
+X-API-Key: gs-dev-master-key-12345
 
 {
   "message": "What licenses do I need to film in Kenya?",
@@ -243,6 +266,7 @@ Content-Type: application/json
 ```http
 POST /chat
 Content-Type: application/json
+X-API-Key: gs-dev-master-key-12345
 
 {
   "message": "What is the Watershed Period mentioned in film regulations?",
@@ -275,6 +299,7 @@ Content-Type: application/json
 ```http
 POST /chat
 Content-Type: application/json
+X-API-Key: gs-dev-master-key-12345
 
 {
   "message": "How do I get a license to operate a cinema in Kenya?",
@@ -306,6 +331,7 @@ Content-Type: application/json
 ```http
 POST /chat
 Content-Type: application/json
+X-API-Key: gs-dev-master-key-12345
 
 {
   "message": "What is the Nairobi Film Centre and what services does it offer?",
@@ -337,30 +363,126 @@ Content-Type: application/json
 }
 ```
 
-## Error Handling
+## API Key Information
 
-### Session Not Found
+You can check your API key permissions:
+
+### Request
+
+```http
+GET /api-info
+X-API-Key: gs-dev-master-key-12345
+```
+
+### Response
 
 ```json
 {
-  "detail": "Chat session 5f9b5b7e-8f0c-4a3c-9d8f-5f9b5b7e8f0c not found"
+  "api_key_name": "master",
+  "permissions": ["read", "write", "delete", "admin"],
+  "description": "Master API key with full access"
 }
 ```
 
-### Internal Server Error
+## Error Responses
+
+### Missing API Key
 
 ```json
 {
-  "detail": "Internal server error: Error processing chat"
+  "detail": "API key required. Please provide X-API-Key header."
 }
+```
+
+### Invalid API Key
+
+```json
+{
+  "detail": "Invalid API key"
+}
+```
+
+### Insufficient Permissions
+
+```json
+{
+  "detail": "Insufficient permissions. Required: write"
+}
+```
+
+## cURL Examples
+
+### Basic Chat Request
+
+```bash
+curl -X POST "http://localhost:5005/chat/" \
+  -H "Content-Type: application/json" \
+  -H "X-API-Key: gs-dev-master-key-12345" \
+  -d '{
+    "message": "What services does the government provide for business registration?",
+    "user_id": "user123"
+  }'
+```
+
+### Get Chat History
+
+```bash
+curl -X GET "http://localhost:5005/chat/your-session-id" \
+  -H "X-API-Key: gs-dev-master-key-12345"
+```
+
+### Upload Document
+
+```bash
+curl -X POST "http://localhost:5005/documents/" \
+  -H "X-API-Key: gs-dev-master-key-12345" \
+  -F "file=@document.pdf" \
+  -F "collection_id=business-registration"
+```
+
+## Python Client Example
+
+```python
+import requests
+
+class GovStackClient:
+    def __init__(self, base_url="http://localhost:5005", api_key="gs-dev-master-key-12345"):
+        self.base_url = base_url
+        self.headers = {
+            "X-API-Key": api_key,
+            "Content-Type": "application/json"
+        }
+    
+    def chat(self, message, session_id=None, user_id=None):
+        """Send a chat message."""
+        payload = {"message": message}
+        if session_id:
+            payload["session_id"] = session_id
+        if user_id:
+            payload["user_id"] = user_id
+            
+        response = requests.post(f"{self.base_url}/chat/", 
+                               json=payload, headers=self.headers)
+        return response.json()
+    
+    def get_chat_history(self, session_id):
+        """Get chat history for a session."""
+        response = requests.get(f"{self.base_url}/chat/{session_id}", 
+                              headers=self.headers)
+        return response.json()
+
+# Usage
+client = GovStackClient()
+result = client.chat("What services does the government provide?")
+print(result["answer"])
 ```
 
 ## Notes
 
-- If you provide a `session_id` that doesn't exist, the system will create a new session with that ID instead of returning an error.
-- Chat history is saved automatically for all conversations.
-- The system maintains the conversation context between messages when using the same session ID.
-- User messages are stored with a simple structure `{"query": "message text"}`.
-- Assistant messages contain the full response including sources, confidence score, and retriever type.
-- The chat endpoint also supports metadata for additional context that can be useful for tracking or analytics.
-- For Kenya Film Classification Board specific queries, the system searches through relevant government documents and regulations to provide accurate information.
+- API keys are required for all endpoints except `/` and `/health`
+- Master API key has full permissions (read, write, delete, admin)
+- Admin API key has management permissions (read, write, admin) but cannot delete
+- Different endpoints require different permission levels
+- API key permissions are checked on every request
+- Invalid or missing API keys return 401 Unauthorized
+- Insufficient permissions return 403 Forbidden

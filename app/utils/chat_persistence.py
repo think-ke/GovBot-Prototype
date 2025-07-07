@@ -7,6 +7,7 @@ from typing import Dict, List, Optional, Any, Union
 from sqlalchemy import select, update, and_
 from sqlalchemy.ext.asyncio import AsyncSession
 from uuid import uuid4
+import uuid
 from pydantic_core import to_jsonable_python
 from pydantic_ai.messages import ModelMessagesTypeAdapter
 
@@ -127,7 +128,7 @@ class ChatPersistenceService:
                 chat_id=chat.id,
                 message_id=str(uuid4()),
                 message_type=message_type,
-                message_object=message_object,
+                message_object=to_jsonable_python(message_object),
                 history=history,
                 timestamp=datetime.now(timezone.utc)
             )

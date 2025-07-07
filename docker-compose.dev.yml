@@ -50,10 +50,31 @@ services:
       timeout: 5s
       retries: 5
 
+  backup-dev:
+    build:
+      context: .
+      dockerfile: docker/backup.Dockerfile
+    environment:
+      - POSTGRES_HOST=postgres-dev
+      - POSTGRES_PORT=5432
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-postgres}
+      - POSTGRES_DB=govstackdb
+      - BACKUP_SCHEDULE=0 */6 * * *  # Every 6 hours for dev
+      - BACKUP_RETENTION_DAYS=7      # Keep 7 days for dev
+    volumes:
+      - ./data/backups-dev:/backups
+    depends_on:
+      postgres-dev:
+        condition: service_healthy
+    networks:
+      - govstack-dev-network
+    restart: unless-stopped
+
   chroma-dev:
     image: chromadb/chroma:1.0.10.dev32
     volumes:
-      - ./data/chroma-dev:/chroma/chroma
+      - ./data/chroma-dev:/data
       - ./server.htpasswd:/chroma/server.htpasswd:ro
     ports:
       - ${CHROMA_DEV_PORT:-8001}:8000
@@ -69,12 +90,12 @@ services:
     volumes:
       - ./data/minio-dev:/data
     ports:
-      - "${MINIO_DEV_PORT:-9001}:9000"
-      - "${MINIO_CONSOLE_DEV_PORT:-9091}:9001"
+      - "${MINIO_DEV_PORT:-9002}:9000"
+      - "${MINIO_CONSOLE_DEV_PORT:-9092}:9001"
     environment:
       - MINIO_ROOT_USER=${MINIO_ACCESS_KEY:-minioadmin}
       - MINIO_ROOT_PASSWORD=${MINIO_SECRET_KEY:-minioadmin}
-    command: server /data --console-address ":9001"
+    command: server /data --console-address ":9002"
     networks:
       - govstack-dev-network
     healthcheck:
@@ -82,6 +103,53 @@ services:
       interval: 30s
       timeout: 20s
       retries: 3
+    restart: unless-stopped
+
+  analytics-dev:
+    build:
+      context: .
+      dockerfile: analytics/Dockerfile
+    ports:
+      - "${ANALYTICS_DEV_PORT:-8006}:8005"
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://postgres:${POSTGRES_PASSWORD:-postgres}@postgres-dev:5432/govstackdb
+    depends_on:
+      postgres-dev:
+        condition: service_healthy
+    networks:
+      - govstack-dev-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8005/analytics/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped
+
+  analytics-dashboard-dev:
+    build:
+      context: ./analytics-dashboard
+      dockerfile: Dockerfile
+    ports:
+      - "${ANALYTICS_DASHBOARD_DEV_PORT:-3002}:3000"
+    environment:
+      - NODE_ENV=development
+      - NEXT_TELEMETRY_DISABLED=1
+      - ANALYTICS_API_URL=http://analytics-dev:8005
+    volumes:
+      - ./analytics-dashboard:/app
+      - /app/node_modules
+      - /app/.next
+    depends_on:
+      - analytics-dev
+    networks:
+      - govstack-dev-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
     restart: unless-stopped
 
 networks:
