@@ -25,7 +25,8 @@ class Webpage(Base):
     crawl_depth = Column(Integer, default=0)
     status_code = Column(Integer, nullable=True)
     error = Column(Text, nullable=True)
-    meta_data = Column(JSON, nullable=True)  # Renamed from 'metadata' which is reserved    is_seed = Column(Boolean, default=False)
+    meta_data = Column(JSON, nullable=True)  # Renamed from 'metadata' which is reserved
+    is_seed = Column(Boolean, default=False)
     content_type = Column(String(100), nullable=True)
     collection_id = Column(String(64), nullable=True, index=True)  # Identifier for crawl jobs/collections
     is_indexed = Column(Boolean, default=False, nullable=False)  # Track whether the webpage has been indexed

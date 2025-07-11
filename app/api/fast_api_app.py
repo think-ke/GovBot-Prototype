@@ -8,6 +8,7 @@ load_dotenv()
 
 import os
 import logging
+from io import BytesIO
 from fastapi import FastAPI, Depends, HTTPException, UploadFile, File, Form, BackgroundTasks, Query, APIRouter
 from fastapi.middleware.cors import CORSMiddleware
 from datetime import datetime, timezone, timedelta
@@ -25,9 +26,10 @@ from app.utils.storage import minio_client
 from app.db.models.document import Document, Base as DocumentBase
 from app.db.models.webpage import Webpage, WebpageLink, Base as WebpageBase
 from app.db.models.chat import Chat, ChatMessage, Base as ChatBase
+from app.db.models.chat_event import ChatEvent, Base as ChatEventBase
 from app.core.crawlers.web_crawler import crawl_website
 from app.core.crawlers.utils import get_page_as_markdown
-from app.core.rag.indexer import extract_text_batch, get_collection_stats, start_background_indexing
+from app.core.rag.indexer import extract_text_batch, get_collection_stats, start_background_indexing, start_background_document_indexing
 from app.core.orchestrator import generate_agent
 from app.utils.security import add_api_key_to_docs, validate_api_key, require_read_permission, require_write_permission, require_delete_permission, APIKeyInfo
 
@@ -67,6 +69,7 @@ async def lifespan(app: FastAPI):
         await conn.run_sync(DocumentBase.metadata.create_all)
         await conn.run_sync(WebpageBase.metadata.create_all)
         await conn.run_sync(ChatBase.metadata.create_all)
+        await conn.run_sync(ChatEventBase.metadata.create_all)
     yield
     # Shutdown logic
     logger.info("Shutting down GovStack API")
@@ -183,10 +186,11 @@ async def api_info(api_key_info: APIKeyInfo = Depends(validate_api_key)):
 # Document endpoints - Updated with security
 @document_router.post("/", status_code=201)
 async def upload_document(
+    background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     description: str = Form(None),
     is_public: bool = Form(False),
-    collection_id: Optional[str] = Form(None),
+    collection_id: str = Form(...),
     db: AsyncSession = Depends(get_db),
     api_key_info: APIKeyInfo = Depends(require_write_permission)
 ):
@@ -198,7 +202,7 @@ async def upload_document(
         file: The file to upload
         description: Optional description of the document
         is_public: Whether the document should be publicly accessible
-        collection_id: Identifier for grouping documents
+        collection_id: Required identifier for grouping documents
         db: Database session
         
     Returns:
@@ -213,14 +217,15 @@ async def upload_document(
         file_content = await file.read()
         file_size = len(file_content)
         
-        # Prepare MinIO metadata
-        minio_metadata = None
-        if collection_id:
-            minio_metadata = {"collection_id": collection_id}
+        # Prepare MinIO metadata with required collection_id
+        minio_metadata = {"collection_id": collection_id}
+        
+        # Convert bytes to file-like object for MinIO
+        file_obj = BytesIO(file_content)
         
         # Upload to MinIO
         minio_client.upload_file(
-            file_obj=file_content,
+            file_obj=file_obj,
             object_name=object_name,
             content_type=file.content_type or "application/octet-stream",
             metadata=minio_metadata  # Pass metadata here
@@ -241,6 +246,9 @@ async def upload_document(
         db.add(document)
         await db.commit()
         await db.refresh(document)
+        
+        # Start background indexing for the uploaded document
+        background_tasks.add_task(start_background_document_indexing, collection_id)
         
         # Generate access URL
         access_url = minio_client.get_presigned_url(object_name)
@@ -378,7 +386,7 @@ class CrawlWebsiteRequest(BaseModel):
     concurrent_requests: int = Field(default=10, ge=1, le=50)
     follow_external: bool = Field(default=False)
     strategy: str = Field(default="breadth_first", pattern="^(breadth_first|depth_first)$")
-    collection_id: Optional[str] = Field(default=None, description="Identifier for grouping crawl jobs")
+    collection_id: str = Field(..., description="Required identifier for grouping crawl jobs")
     
 class WebpageResponse(BaseModel):
     """Response model for webpage data."""
@@ -388,7 +396,7 @@ class WebpageResponse(BaseModel):
     crawl_depth: int
     last_crawled: Optional[str] = None
     status_code: Optional[int] = None
-    collection_id: Optional[str] = None
+    collection_id: str
     
 class WebpageLinkResponse(BaseModel):
     """Response model for webpage link data."""
@@ -488,10 +496,9 @@ async def start_crawl(
                     "finished": True
                 })
                 
-                # Start background indexing for the collection if a collection_id was provided
-                if request.collection_id:
-                    logger.info(f"Crawl completed, starting background indexing for collection '{request.collection_id}'")
-                    start_background_indexing(request.collection_id)
+                # Start background indexing for the collection
+                logger.info(f"Crawl completed, starting background indexing for collection '{request.collection_id}'")
+                start_background_indexing(request.collection_id)
                 
             except Exception as e:
                 logger.error(f"Error in background crawl task: {str(e)}")
@@ -857,6 +864,9 @@ app.include_router(core_router)
 # Import the chat endpoints router
 from app.api.endpoints.chat_endpoints import router as chat_router
 app.include_router(chat_router, prefix="/chat", tags=["Chat"])
+# Import the chat event endpoints router
+from app.api.endpoints.chat_event_endpoints import router as chat_event_router
+app.include_router(chat_event_router, prefix="/chat", tags=["Chat"])
 app.include_router(document_router)
 app.include_router(crawler_router)
 app.include_router(webpage_router)

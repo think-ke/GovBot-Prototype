@@ -75,11 +75,17 @@ class MinioClient:
         """
         try:
             logger.info(f"Uploading file to bucket {self.bucket_name} with name {object_name}")
+            
+            # Get the file size
+            file_obj.seek(0, 2)  # Seek to end
+            file_size = file_obj.tell()
+            file_obj.seek(0)  # Reset to beginning
+            
             self.client.put_object(
                 bucket_name=self.bucket_name,
                 object_name=object_name,
                 data=file_obj,
-                length=-1,  # Calculate length automatically
+                length=file_size,
                 content_type=content_type,
                 metadata=metadata
             )

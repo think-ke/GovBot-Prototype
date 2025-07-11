@@ -26,6 +26,8 @@ class Document(Base):
     is_public = Column(Boolean, default=False)
     meta_data = Column(JSON, nullable=True)  # Renamed from 'metadata' which is reserved
     collection_id = Column(String(64), nullable=True, index=True)  # Identifier for collections
+    is_indexed = Column(Boolean, default=False, nullable=False)  # Track whether the document has been indexed
+    indexed_at = Column(DateTime(timezone=True), nullable=True)  # When the document was indexed
 
     def to_dict(self) -> Dict[str, Any]:
         """
@@ -43,4 +45,6 @@ class Document(Base):
             "is_public": self.is_public,
             "metadata": self.meta_data,
             "collection_id": self.collection_id,
+            "is_indexed": self.is_indexed,
+            "indexed_at": self.indexed_at.isoformat() if self.indexed_at else None,
         }

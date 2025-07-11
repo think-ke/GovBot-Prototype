@@ -156,6 +156,28 @@ services:
       start_period: 30s
     restart: unless-stopped
 
+  admin-dashboard:
+    build:
+      context: ./admin-dashboard
+      dockerfile: Dockerfile
+    ports:
+      - "${ADMIN_DASHBOARD_PORT:-3010}:3010"
+    environment:
+      - NODE_ENV=production
+      - NEXT_TELEMETRY_DISABLED=1
+      - API_URL=http://govstack-server:5000
+    depends_on:
+      - govstack-server
+    networks:
+      - govstack-net
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3010/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped
+
   metabase:
     image: metabase/metabase:latest
     container_name: metabase

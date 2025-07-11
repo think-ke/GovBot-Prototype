@@ -14,6 +14,7 @@ from pydantic_ai.messages import ModelMessagesTypeAdapter
 from app.db.database import get_db
 from app.utils.chat_persistence import ChatPersistenceService
 from app.core.orchestrator import generate_agent, Output, Source, Usage, UsageDetails
+from app.core.event_orchestrator import generate_agent_with_events, EventTrackingContext
 from app.utils.security import validate_api_key, require_read_permission, require_write_permission, require_delete_permission, APIKeyInfo
 
 # Configure logging
@@ -165,8 +166,11 @@ async def process_chat(
     Returns:
         Chat response containing the session ID and agent output
     """
+    from app.utils.chat_event_service import ChatEventService
+    
     trace_id = str(uuid.uuid4())  # Generate a unique trace ID for logging
     session_id = request.session_id
+    message_id = str(uuid.uuid4())  # Generate unique message ID for event tracking
     
     # New conversation (no session_id provided) or continuing conversation
     is_new_session = not session_id
@@ -184,11 +188,34 @@ async def process_chat(
             await ChatPersistenceService.create_chat_session_with_id(db, session_id, request.user_id)
     
     try:
+        # Event: Message received
+        await ChatEventService.create_event(
+            db, session_id, "message_received", "started", message_id
+        )
+        
         start_time = datetime.now()
         
+        # Event: Loading history (if not new session)
+        if not is_new_session:
+            await ChatEventService.create_event(
+                db, session_id, "loading_history", "started", message_id
+            )
+        
         # Create agent and load message history if available
-        agent = generate_agent()
-        message_history = await ChatPersistenceService.load_history(db, session_id)
+        # Use event-aware agent with tracking context
+        with EventTrackingContext(db, session_id, message_id):
+            agent = generate_agent_with_events()
+            message_history = await ChatPersistenceService.load_history(db, session_id)
+        
+        if not is_new_session:
+            await ChatEventService.create_event(
+                db, session_id, "loading_history", "completed", message_id
+            )
+        
+        # Event: Message validated and ready for processing
+        await ChatEventService.create_event(
+            db, session_id, "message_received", "completed", message_id
+        )
         
         # Save the user message first
         user_message_obj = {"query": request.message}
@@ -199,16 +226,35 @@ async def process_chat(
             user_message_obj
         )
         
+        # Event: Agent thinking
+        await ChatEventService.create_event(
+            db, session_id, "agent_thinking", "started", message_id
+        )
+        
         # Process the message with history if available
-        if message_history:
-            logger.info(f"[{trace_id}] Processing message with history for session: {session_id}")
-            result = await agent.run(request.message, message_history=message_history)
-        else:
-            logger.info(f"[{trace_id}] Processing message without history for session: {session_id}")
-            result = await agent.run(request.message)
+        # Run agent within event tracking context
+        with EventTrackingContext(db, session_id, message_id):
+            if message_history:
+                logger.info(f"[{trace_id}] Processing message with history for session: {session_id}")
+                result = await agent.run(request.message, message_history=message_history)
+            else:
+                logger.info(f"[{trace_id}] Processing message without history for session: {session_id}")
+                result = await agent.run(request.message)
         
         processing_time = (datetime.now() - start_time).total_seconds()
+        processing_time_ms = int(processing_time * 1000)
         logger.info(f"[{trace_id}] Processed message in {processing_time:.2f} seconds")
+        
+        # Event: Agent thinking completed
+        await ChatEventService.create_event(
+            db, session_id, "agent_thinking", "completed", message_id, 
+            processing_time_ms=processing_time_ms
+        )
+        
+        # Event: Response generation
+        await ChatEventService.create_event(
+            db, session_id, "response_generation", "started", message_id
+        )
         
         # Get usage information
         usage_info = convert_usage(result.usage())
@@ -225,6 +271,16 @@ async def process_chat(
             "usage": usage_info.dict() if usage_info else None
         }
         
+        # Event: Response generation completed
+        await ChatEventService.create_event(
+            db, session_id, "response_generation", "completed", message_id
+        )
+        
+        # Event: Saving message
+        await ChatEventService.create_event(
+            db, session_id, "saving_message", "started", message_id
+        )
+        
         # Save the assistant message with history
         history = result.all_messages()
         history_as_python = to_jsonable_python(history)
@@ -238,7 +294,16 @@ async def process_chat(
             
         if not success:
             logger.error(f"[{trace_id}] Failed to save chat messages for session: {session_id}")
+            await ChatEventService.create_event(
+                db, session_id, "error", "failed", message_id,
+                event_data={"error_message": "Failed to save chat messages"}
+            )
             raise HTTPException(status_code=500, detail="Failed to save chat messages")
+        
+        # Event: Message saved successfully
+        await ChatEventService.create_event(
+            db, session_id, "saving_message", "completed", message_id
+        )
         
         # Return the response with empty follow-up questions
         response = ChatResponse(
@@ -255,8 +320,18 @@ async def process_chat(
         return response
     
     except HTTPException:
+        # Log error event for HTTP exceptions
+        await ChatEventService.create_event(
+            db, session_id, "error", "failed", message_id,
+            event_data={"error_message": "HTTP error occurred during processing"}
+        )
         raise
     except Exception as e:
+        # Log error event for general exceptions
+        await ChatEventService.create_event(
+            db, session_id, "error", "failed", message_id,
+            event_data={"error_message": f"Internal server error: {str(e)}"}
+        )
         logger.error(f"[{trace_id}] Error processing chat: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
 

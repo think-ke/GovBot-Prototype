@@ -152,6 +152,32 @@ services:
       start_period: 30s
     restart: unless-stopped
 
+  admin-dashboard-dev:
+    build:
+      context: ./admin-dashboard
+      dockerfile: Dockerfile
+    ports:
+      - "${ADMIN_DASHBOARD_DEV_PORT:-3011}:3010"
+    environment:
+      - NODE_ENV=development
+      - NEXT_TELEMETRY_DISABLED=1
+      - API_URL=http://api:5005
+    volumes:
+      - ./admin-dashboard:/app
+      - /app/node_modules
+      - /app/.next
+    depends_on:
+      - api
+    networks:
+      - govstack-dev-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3010/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped
+
 networks:
   govstack-dev-network:
     driver: bridge
