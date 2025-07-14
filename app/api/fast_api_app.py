@@ -27,6 +27,7 @@ from app.db.models.document import Document, Base as DocumentBase
 from app.db.models.webpage import Webpage, WebpageLink, Base as WebpageBase
 from app.db.models.chat import Chat, ChatMessage, Base as ChatBase
 from app.db.models.chat_event import ChatEvent, Base as ChatEventBase
+from app.db.models.message_rating import MessageRating, Base as MessageRatingBase
 from app.core.crawlers.web_crawler import crawl_website
 from app.core.crawlers.utils import get_page_as_markdown
 from app.core.rag.indexer import extract_text_batch, get_collection_stats, start_background_indexing, start_background_document_indexing
@@ -1115,6 +1116,9 @@ app.include_router(chat_router, prefix="/chat", tags=["Chat"])
 # Import the chat event endpoints router
 from app.api.endpoints.chat_event_endpoints import router as chat_event_router
 app.include_router(chat_event_router, prefix="/chat", tags=["Chat"])
+# Import the rating endpoints router
+from app.api.endpoints.rating_endpoints import router as rating_router
+app.include_router(rating_router, prefix="/chat", tags=["Chat"])
 app.include_router(document_router)
 app.include_router(crawler_router)
 app.include_router(webpage_router)
