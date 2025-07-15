@@ -62,7 +62,7 @@ class Usage(BaseModel):
 
 
 class FollowUpQuestion(BaseModel):
-    """Represents a recommended follow-up question."""
+    """Represents a recommended follow-up question related to the user's query to further explore the topic."""
     question: str = Field(
         description="The recommended follow-up question for the user",
         min_length=1
@@ -105,8 +105,8 @@ class Output(BaseModel):
     )
 
     recommended_follow_up_questions: List[FollowUpQuestion] = Field(
-        default_factory=list,
-        description="List of recommended follow-up questions based on the user's query"
+        description="List of recommended follow-up questions related to the answer",
+        default_factory=list
     )
 
     class Config:

@@ -155,6 +155,8 @@ services:
       retries: 5
       start_period: 30s
     restart: unless-stopped
+    profiles:
+      - standalone-analytics  # Only start this service when explicitly requested
 
   admin-dashboard:
     build:
@@ -166,8 +168,10 @@ services:
       - NODE_ENV=production
       - NEXT_TELEMETRY_DISABLED=1
       - API_URL=http://govstack-server:5000
+      - NEXT_PUBLIC_ANALYTICS_API_URL=http://analytics:8005/analytics
     depends_on:
       - govstack-server
+      - analytics
     networks:
       - govstack-net
     healthcheck:
