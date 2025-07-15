@@ -31,6 +31,10 @@ class Webpage(Base):
     collection_id = Column(String(64), nullable=True, index=True)  # Identifier for crawl jobs/collections
     is_indexed = Column(Boolean, default=False, nullable=False)  # Track whether the webpage has been indexed
     indexed_at = Column(DateTime(timezone=True), nullable=True)  # When the webpage was indexed
+    # Audit trail fields
+    created_by = Column(String(100), nullable=True, index=True)  # User ID who initiated the crawl
+    updated_by = Column(String(100), nullable=True, index=True)  # User ID who last updated the webpage
+    api_key_name = Column(String(100), nullable=True, index=True)  # API key name used for crawl
     
     # Links relationship
     outgoing_links = relationship("WebpageLink", foreign_keys="WebpageLink.source_id", back_populates="source")
@@ -54,6 +58,9 @@ class Webpage(Base):
             "collection_id": self.collection_id,
             "is_indexed": self.is_indexed,
             "indexed_at": self.indexed_at.isoformat() if self.indexed_at else None,
+            "created_by": self.created_by,
+            "updated_by": self.updated_by,
+            "api_key_name": self.api_key_name,
         }
 
 

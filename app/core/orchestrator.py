@@ -223,5 +223,35 @@ if __name__ == "__main__":
 
 
 
+    from pydantic_ai import Agent
+    from pydantic_ai.models.openai import OpenAIModel
+    import os
+    from dotenv import load_dotenv
+    load_dotenv()
+
+
+
+    base_url = os.getenv("RUNPOD_BASE_URL")
+    api_key = os.getenv("RUNPOD_API_KEY")
+    # Example model name, replace with your
+
+    MODEL_NAME = "microsoft/Phi-4-mini-instruct"
+
+    model = OpenAIModel(
+        model_name=MODEL_NAME,
+        base_url=base_url,
+        api_key=api_key
+    )
+
+    agent = Agent(  
+        model=model,
+        system_prompt='Be concise, reply with one sentence.',  
+    )
+
+    result = agent.run_sync('Where does "hello world" come from?')  
+    print(result.data)
+
+
+
 
 

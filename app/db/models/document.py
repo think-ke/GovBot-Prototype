@@ -28,6 +28,10 @@ class Document(Base):
     collection_id = Column(String(64), nullable=True, index=True)  # Identifier for collections
     is_indexed = Column(Boolean, default=False, nullable=False)  # Track whether the document has been indexed
     indexed_at = Column(DateTime(timezone=True), nullable=True)  # When the document was indexed
+    # Audit trail fields
+    created_by = Column(String(100), nullable=True, index=True)  # User ID who created/uploaded the document
+    updated_by = Column(String(100), nullable=True, index=True)  # User ID who last updated the document
+    api_key_name = Column(String(100), nullable=True, index=True)  # API key name used for creation
 
     def to_dict(self) -> Dict[str, Any]:
         """
@@ -47,4 +51,7 @@ class Document(Base):
             "collection_id": self.collection_id,
             "is_indexed": self.is_indexed,
             "indexed_at": self.indexed_at.isoformat() if self.indexed_at else None,
+            "created_by": self.created_by,
+            "updated_by": self.updated_by,
+            "api_key_name": self.api_key_name,
         }

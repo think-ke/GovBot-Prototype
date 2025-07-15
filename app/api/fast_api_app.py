@@ -9,7 +9,7 @@ load_dotenv()
 import os
 import logging
 from io import BytesIO
-from fastapi import FastAPI, Depends, HTTPException, UploadFile, File, Form, BackgroundTasks, Query, APIRouter
+from fastapi import FastAPI, Depends, HTTPException, UploadFile, File, Form, BackgroundTasks, Query, APIRouter, Request
 from fastapi.middleware.cors import CORSMiddleware
 from datetime import datetime, timezone, timedelta
 import uuid
@@ -28,11 +28,12 @@ from app.db.models.webpage import Webpage, WebpageLink, Base as WebpageBase
 from app.db.models.chat import Chat, ChatMessage, Base as ChatBase
 from app.db.models.chat_event import ChatEvent, Base as ChatEventBase
 from app.db.models.message_rating import MessageRating, Base as MessageRatingBase
+from app.db.models.audit_log import AuditLog, Base as AuditBase
 from app.core.crawlers.web_crawler import crawl_website
 from app.core.crawlers.utils import get_page_as_markdown
 from app.core.rag.indexer import extract_text_batch, get_collection_stats, start_background_indexing, start_background_document_indexing
 from app.core.orchestrator import generate_agent
-from app.utils.security import add_api_key_to_docs, validate_api_key, require_read_permission, require_write_permission, require_delete_permission, APIKeyInfo
+from app.utils.security import add_api_key_to_docs, validate_api_key, require_read_permission, require_write_permission, require_delete_permission, APIKeyInfo, log_audit_action
 
 import logfire
 
@@ -71,6 +72,7 @@ async def lifespan(app: FastAPI):
         await conn.run_sync(WebpageBase.metadata.create_all)
         await conn.run_sync(ChatBase.metadata.create_all)
         await conn.run_sync(ChatEventBase.metadata.create_all)
+        await conn.run_sync(AuditBase.metadata.create_all)
     yield
     # Shutdown logic
     logger.info("Shutting down GovStack API")
@@ -105,6 +107,10 @@ app = FastAPI(
         {
             "name": "Collections",
             "description": "Collection statistics and management",
+        },
+        {
+            "name": "Audit",
+            "description": "Audit trail and activity logging",
         },
     ]
 )
@@ -188,6 +194,7 @@ async def api_info(api_key_info: APIKeyInfo = Depends(validate_api_key)):
 @document_router.post("/", status_code=201)
 async def upload_document(
     background_tasks: BackgroundTasks,
+    request: Request,
     file: UploadFile = File(...),
     description: str = Form(None),
     is_public: bool = Form(False),
@@ -205,13 +212,14 @@ async def upload_document(
         is_public: Whether the document should be publicly accessible
         collection_id: Required identifier for grouping documents
         db: Database session
+        request: Request object for audit logging
         
     Returns:
         Document metadata with access URL
     """
     try:
         # Generate a unique object name
-        file_extension = os.path.splitext(file.filename)[1] if "." in file.filename else ""
+        file_extension = os.path.splitext(file.filename or "")[1] if file.filename and "." in file.filename else ""
         object_name = f"{uuid.uuid4()}{file_extension}"
         
         # Read file content
@@ -232,7 +240,7 @@ async def upload_document(
             metadata=minio_metadata  # Pass metadata here
         )
         
-        # Create document record
+        # Create document record with audit trail
         document = Document(
             filename=file.filename,
             object_name=object_name,
@@ -241,12 +249,30 @@ async def upload_document(
             description=description,
             is_public=is_public,
             metadata={"original_filename": file.filename},
-            collection_id=collection_id  # Pass collection_id to Document constructor
+            collection_id=collection_id,
+            created_by=api_key_info.get_user_id(),
+            api_key_name=api_key_info.name
         )
         
         db.add(document)
         await db.commit()
         await db.refresh(document)
+        
+        # Log audit action
+        await log_audit_action(
+            user_id=api_key_info.get_user_id(),
+            action="upload",
+            resource_type="document",
+            resource_id=str(document.id),
+            details={
+                "filename": file.filename,
+                "size": file_size,
+                "collection_id": collection_id,
+                "is_public": is_public
+            },
+            request=request,
+            api_key_name=api_key_info.name
+        )
         
         # Start background indexing for the uploaded document
         background_tasks.add_task(start_background_document_indexing, collection_id)
@@ -379,6 +405,7 @@ async def list_documents_by_collection(
 @document_router.delete("/{document_id}")
 async def delete_document(
     document_id: int,
+    request: Request,
     db: AsyncSession = Depends(get_db),
     api_key_info: APIKeyInfo = Depends(require_delete_permission)
 ):
@@ -389,6 +416,7 @@ async def delete_document(
     Args:
         document_id: ID of the document to delete
         db: Database session
+        request: Request object for audit logging
         
     Returns:
         Confirmation message
@@ -399,6 +427,13 @@ async def delete_document(
         if not document:
             raise HTTPException(status_code=404, detail="Document not found")
         
+        # Store document info for audit log
+        document_info = {
+            "filename": document.filename,
+            "collection_id": document.collection_id,
+            "size": document.size
+        }
+        
         # Delete from MinIO
         object_name = document.object_name
         minio_client.delete_file(object_name)
@@ -406,6 +441,17 @@ async def delete_document(
         # Delete from database
         await db.delete(document)
         await db.commit()
+        
+        # Log audit action
+        await log_audit_action(
+            user_id=api_key_info.get_user_id(),
+            action="delete",
+            resource_type="document",
+            resource_id=str(document_id),
+            details=document_info,
+            request=request,
+            api_key_name=api_key_info.name
+        )
         
         return {"message": f"Document {document_id} deleted successfully"}
     
@@ -513,8 +559,9 @@ crawl_tasks = {}
 # Web Crawler Endpoints
 @crawler_router.post("/", response_model=CrawlStatusResponse)
 async def start_crawl(
-    request: CrawlWebsiteRequest,
+    request_data: CrawlWebsiteRequest,
     background_tasks: BackgroundTasks,
+    request: Request,
     db: AsyncSession = Depends(get_db),
     api_key_info: APIKeyInfo = Depends(require_write_permission)
 ):
@@ -523,9 +570,10 @@ async def start_crawl(
     Requires write permission.
     
     Args:
-        request: Crawl configuration
+        request_data: Crawl configuration
         background_tasks: Background task manager
         db: Database session
+        request: Request object for audit logging
         
     Returns:
         Initial crawl status including task ID
@@ -536,14 +584,32 @@ async def start_crawl(
         # Initialize task status
         crawl_tasks[task_id] = {
             "status": "starting",
-            "seed_urls": [str(request.url)],
+            "seed_urls": [str(request_data.url)],
             "start_time": datetime.now(timezone.utc).isoformat(),
             "urls_crawled": 0,
             "total_urls_queued": 1,
             "errors": 0,
             "finished": False,
-            "collection_id": request.collection_id,
+            "collection_id": request_data.collection_id,
+            "user_id": api_key_info.get_user_id(),
+            "api_key_name": api_key_info.name,
         }
+        
+        # Log audit action for crawl start
+        await log_audit_action(
+            user_id=api_key_info.get_user_id(),
+            action="crawl_start",
+            resource_type="webpage",
+            resource_id=task_id,
+            details={
+                "url": str(request_data.url),
+                "depth": request_data.depth,
+                "collection_id": request_data.collection_id,
+                "strategy": request_data.strategy
+            },
+            request=request,
+            api_key_name=api_key_info.name
+        )
         
         # Define the background task function
         async def background_crawl():
@@ -552,14 +618,16 @@ async def start_crawl(
                 crawl_tasks[task_id]["status"] = "running"
                 # Start the crawl operation                
                 result = await crawl_website(
-                    seed_url=str(request.url),
-                    depth=request.depth,
-                    concurrent_requests=request.concurrent_requests,
-                    follow_external=request.follow_external,
-                    strategy=request.strategy,
-                    collection_id=request.collection_id,
+                    seed_url=str(request_data.url),
+                    depth=request_data.depth,
+                    concurrent_requests=request_data.concurrent_requests,
+                    follow_external=request_data.follow_external,
+                    strategy=request_data.strategy,
+                    collection_id=request_data.collection_id,
                     session_maker=async_session,
-                    task_status=crawl_tasks[task_id]
+                    task_status=crawl_tasks[task_id],
+                    user_id=api_key_info.get_user_id(),  # Pass user ID for audit trail
+                    api_key_name=api_key_info.name  # Pass API key name for audit trail
                 )
                 # Update task status on completion
                 crawl_tasks[task_id].update({
@@ -569,9 +637,23 @@ async def start_crawl(
                     "finished": True
                 })
                 
+                # Log audit action for crawl completion
+                await log_audit_action(
+                    user_id=api_key_info.get_user_id(),
+                    action="crawl_complete",
+                    resource_type="webpage",
+                    resource_id=task_id,
+                    details={
+                        "urls_crawled": result.get("urls_crawled", 0),
+                        "errors": result.get("errors", 0),
+                        "collection_id": request_data.collection_id
+                    },
+                    api_key_name=api_key_info.name
+                )
+                
                 # Start background indexing for the collection
-                logger.info(f"Crawl completed, starting background indexing for collection '{request.collection_id}'")
-                start_background_indexing(request.collection_id)
+                logger.info(f"Crawl completed, starting background indexing for collection '{request_data.collection_id}'")
+                start_background_indexing(request_data.collection_id)
                 
             except Exception as e:
                 logger.error(f"Error in background crawl task: {str(e)}")
@@ -580,6 +662,19 @@ async def start_crawl(
                     "error_message": str(e),
                     "finished": True
                 })
+                
+                # Log audit action for crawl failure
+                await log_audit_action(
+                    user_id=api_key_info.get_user_id(),
+                    action="crawl_failed",
+                    resource_type="webpage",
+                    resource_id=task_id,
+                    details={
+                        "error": str(e),
+                        "collection_id": request_data.collection_id
+                    },
+                    api_key_name=api_key_info.name
+                )
         
         # Add the crawl task to background tasks
         background_tasks.add_task(background_crawl)
@@ -591,7 +686,7 @@ async def start_crawl(
             seed_urls=crawl_tasks[task_id]["seed_urls"],
             start_time=crawl_tasks[task_id]["start_time"],
             finished=False,
-            collection_id=request.collection_id
+            collection_id=request_data.collection_id
         )
         
     except Exception as e:
@@ -883,7 +978,8 @@ async def extract_texts_from_collection(
 # Collection Management Endpoints
 @collection_router.post("/", response_model=CollectionResponse)
 async def create_collection(
-    request: CreateCollectionRequest,
+    request_data: CreateCollectionRequest,
+    request: Request,
     api_key_info: APIKeyInfo = Depends(require_write_permission)
 ):
     """
@@ -891,7 +987,8 @@ async def create_collection(
     Requires write permission.
     
     Args:
-        request: Collection creation data
+        request_data: Collection creation data
+        request: Request object for audit logging
         
     Returns:
         Created collection data
@@ -903,14 +1000,29 @@ async def create_collection(
         
         collection_data = {
             "id": collection_id,
-            "name": request.name,
-            "description": request.description,
-            "type": request.type,
+            "name": request_data.name,
+            "description": request_data.description,
+            "type": request_data.type,
             "created_at": current_time,
             "updated_at": current_time
         }
         
         collections_storage[collection_id] = collection_data
+        
+        # Log audit action
+        await log_audit_action(
+            user_id=api_key_info.get_user_id(),
+            action="create",
+            resource_type="collection",
+            resource_id=collection_id,
+            details={
+                "name": request_data.name,
+                "type": request_data.type,
+                "description": request_data.description
+            },
+            request=request,
+            api_key_name=api_key_info.name
+        )
         
         # Add counts (would come from database queries in real implementation)
         response_data = collection_data.copy()
@@ -968,7 +1080,8 @@ async def list_collections(
 @collection_router.put("/{collection_id}", response_model=CollectionResponse) 
 async def update_collection(
     collection_id: str,
-    request: UpdateCollectionRequest,
+    request_data: UpdateCollectionRequest,
+    request: Request,
     api_key_info: APIKeyInfo = Depends(require_write_permission),
     db: AsyncSession = Depends(get_db)
 ):
@@ -978,7 +1091,8 @@ async def update_collection(
     
     Args:
         collection_id: ID of the collection to update
-        request: Collection update data
+        request_data: Collection update data
+        request: Request object for audit logging
         
     Returns:
         Updated collection data
@@ -988,17 +1102,33 @@ async def update_collection(
             raise HTTPException(status_code=404, detail="Collection not found")
         
         collection_data = collections_storage[collection_id].copy()
+        original_data = collection_data.copy()
         
         # Update fields that were provided
-        if request.name is not None:
-            collection_data["name"] = request.name
-        if request.description is not None:
-            collection_data["description"] = request.description
-        if request.type is not None:
-            collection_data["type"] = request.type
+        changes = {}
+        if request_data.name is not None:
+            changes["name"] = {"old": collection_data.get("name"), "new": request_data.name}
+            collection_data["name"] = request_data.name
+        if request_data.description is not None:
+            changes["description"] = {"old": collection_data.get("description"), "new": request_data.description}
+            collection_data["description"] = request_data.description
+        if request_data.type is not None:
+            changes["type"] = {"old": collection_data.get("type"), "new": request_data.type}
+            collection_data["type"] = request_data.type
         
         collection_data["updated_at"] = datetime.now(timezone.utc).isoformat()
         collections_storage[collection_id] = collection_data
+        
+        # Log audit action
+        await log_audit_action(
+            user_id=api_key_info.get_user_id(),
+            action="update",
+            resource_type="collection",
+            resource_id=collection_id,
+            details={"changes": changes},
+            request=request,
+            api_key_name=api_key_info.name
+        )
         
         # Add counts
         from sqlalchemy import select, func
@@ -1027,6 +1157,7 @@ async def update_collection(
 @collection_router.delete("/{collection_id}")
 async def delete_collection(
     collection_id: str,
+    request: Request,
     api_key_info: APIKeyInfo = Depends(require_delete_permission)
 ):
     """
@@ -1035,6 +1166,7 @@ async def delete_collection(
     
     Args:
         collection_id: ID of the collection to delete
+        request: Request object for audit logging
         
     Returns:
         Confirmation message
@@ -1046,7 +1178,24 @@ async def delete_collection(
         if collection_id == "default":
             raise HTTPException(status_code=400, detail="Cannot delete default collection")
         
+        # Store collection info for audit log
+        collection_info = collections_storage[collection_id].copy()
+        
         del collections_storage[collection_id]
+        
+        # Log audit action
+        await log_audit_action(
+            user_id=api_key_info.get_user_id(),
+            action="delete",
+            resource_type="collection",
+            resource_id=collection_id,
+            details={
+                "name": collection_info.get("name"),
+                "type": collection_info.get("type")
+            },
+            request=request,
+            api_key_name=api_key_info.name
+        )
         
         return {"message": f"Collection {collection_id} deleted successfully"}
     
@@ -1119,6 +1268,9 @@ app.include_router(chat_event_router, prefix="/chat", tags=["Chat"])
 # Import the rating endpoints router
 from app.api.endpoints.rating_endpoints import router as rating_router
 app.include_router(rating_router, prefix="/chat", tags=["Chat"])
+# Import the audit endpoints router
+from app.api.endpoints.audit_endpoints import router as audit_router
+app.include_router(audit_router, prefix="/admin", tags=["Audit"])
 app.include_router(document_router)
 app.include_router(crawler_router)
 app.include_router(webpage_router)

@@ -308,7 +308,7 @@ class WebCrawler:
     """
     Advanced web crawler with configurable settings.
     """
-    def __init__(self, settings=None, engine=None, collection_id=None):
+    def __init__(self, settings=None, engine=None, collection_id=None, user_id=None, api_key_name=None):
         """
         Initialize the web crawler.
         
@@ -316,11 +316,15 @@ class WebCrawler:
             settings: Crawler settings
             engine: SQLAlchemy engine for database operations
             collection_id: Identifier for grouping crawl jobs
+            user_id: User ID for audit trail
+            api_key_name: API key name for audit trail
         """
         self.settings = DEFAULT_SETTINGS.copy()
         if settings:
             self.settings.update(settings)
         self.collection_id = collection_id
+        self.user_id = user_id
+        self.api_key_name = api_key_name
         # Ensure the database URL uses the asyncpg driver
         db_url = DATABASE_URL
         if not db_url.startswith('postgresql+asyncpg://'):
@@ -370,7 +374,9 @@ class WebCrawler:
                     url=url,
                     crawl_depth=depth,
                     first_crawled=datetime.now(timezone.utc),
-                    collection_id=self.collection_id
+                    collection_id=self.collection_id,
+                    created_by=self.user_id,
+                    api_key_name=self.api_key_name
                 )
                 session.add(webpage)
                 logger.debug(f"Added new webpage to session: {url}")
@@ -990,7 +996,8 @@ def get_page_as_markdown(url: str, skip_ssl_verification: bool = False) -> str:
 
 async def crawl_website(seed_url: str, depth: int = 3, concurrent_requests: int = 10, 
                         follow_external: bool = False, strategy: str = 'breadth_first',
-                        collection_id: Optional[str] = None, session_maker=None, task_status=None) -> Dict:
+                        collection_id: Optional[str] = None, session_maker=None, task_status=None,
+                        user_id: Optional[str] = None, api_key_name: Optional[str] = None) -> Dict:
     """
     Crawl a website starting from a seed URL.
     
@@ -1000,8 +1007,11 @@ async def crawl_website(seed_url: str, depth: int = 3, concurrent_requests: int 
         concurrent_requests: Maximum number of concurrent requests
         follow_external: Whether to follow external links
         strategy: Crawl strategy ('breadth_first' or 'depth_first')
+        collection_id: Optional collection ID to group crawled pages
         session_maker: Optional SQLAlchemy session maker for database operations
         task_status: Optional dictionary to update with crawl status
+        user_id: User ID for audit trail
+        api_key_name: API key name for audit trail
         
     Returns:
         Dictionary with crawl statistics
@@ -1014,7 +1024,7 @@ async def crawl_website(seed_url: str, depth: int = 3, concurrent_requests: int 
         'crawl_strategy': strategy
     })
       # Create crawler instance
-    crawler = WebCrawler(settings=settings, collection_id=collection_id)
+    crawler = WebCrawler(settings=settings, collection_id=collection_id, user_id=user_id, api_key_name=api_key_name)
     
     # If session_maker is provided, use it
     if session_maker:

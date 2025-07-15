@@ -4,7 +4,7 @@ Security utilities for API authentication and authorization.
 import os
 import secrets
 from typing import Optional
-from fastapi import HTTPException, Header, Depends
+from fastapi import HTTPException, Header, Depends, Request
 from fastapi.security import APIKeyHeader
 import logging
 
@@ -52,6 +52,10 @@ class APIKeyInfo:
     def has_permission(self, permission: str) -> bool:
         """Check if the API key has a specific permission."""
         return permission in self.permissions or "admin" in self.permissions
+    
+    def get_user_id(self) -> str:
+        """Get user ID for audit logging. Uses API key name as user identifier."""
+        return self.name
 
 def generate_api_key(prefix: str = "gs") -> str:
     """Generate a secure API key."""
@@ -157,6 +161,90 @@ async def require_admin_permission(api_key_info: APIKeyInfo = Depends(validate_a
             detail="Admin permission required",
         )
     return api_key_info
+
+async def log_audit_action(
+    user_id: str,
+    action: str,
+    resource_type: str,
+    resource_id: Optional[str] = None,
+    details: Optional[dict] = None,
+    request: Optional[Request] = None,
+    api_key_name: Optional[str] = None
+):
+    """
+    Log an audit action to the database.
+    
+    Args:
+        user_id: User identifier (typically API key name)
+        action: Action performed (e.g., 'create', 'update', 'delete', 'upload', 'crawl')
+        resource_type: Type of resource affected (e.g., 'document', 'webpage', 'collection')
+        resource_id: ID of the affected resource
+        details: Additional details about the action
+        request: FastAPI request object for extracting IP and user agent
+        api_key_name: Name of the API key used
+    """
+    try:
+        from app.db.models.audit_log import AuditLog
+        from app.db.database import async_session
+        
+        # Extract IP address and user agent from request if available
+        ip_address = None
+        user_agent = None
+        if request:
+            # Try to get real IP from headers (for reverse proxies)
+            ip_address = (
+                request.headers.get("X-Forwarded-For", "").split(",")[0].strip() or
+                request.headers.get("X-Real-IP") or
+                request.client.host if request.client else None
+            )
+            user_agent = request.headers.get("User-Agent")
+        
+        # Create audit log entry
+        audit_log = AuditLog(
+            user_id=user_id,
+            action=action,
+            resource_type=resource_type,
+            resource_id=resource_id,
+            details=details,
+            ip_address=ip_address,
+            user_agent=user_agent,
+            api_key_name=api_key_name or user_id
+        )
+        
+        async with async_session() as session:
+            session.add(audit_log)
+            await session.commit()
+            logger.info(f"Audit log created: {user_id} performed {action} on {resource_type} {resource_id}")
+    
+    except Exception as e:
+        # Don't fail the main operation if audit logging fails
+        logger.error(f"Failed to create audit log: {str(e)}")
+
+def create_audit_dependency(action: str, resource_type: str):
+    """
+    Create a dependency that automatically logs audit actions.
+    
+    Args:
+        action: The action being performed
+        resource_type: The type of resource being acted upon
+        
+    Returns:
+        Dependency function that logs the action
+    """
+    async def audit_logger(
+        request: Request,
+        api_key_info: APIKeyInfo = Depends(validate_api_key)
+    ) -> APIKeyInfo:
+        # Store audit info in request state for later use
+        request.state.audit_user_id = api_key_info.get_user_id()
+        request.state.audit_action = action
+        request.state.audit_resource_type = resource_type
+        request.state.audit_api_key_name = api_key_info.name
+        request.state.audit_request = request
+        
+        return api_key_info
+    
+    return audit_logger
 
 def add_api_key_to_docs():
     """Add API key information to OpenAPI documentation."""
