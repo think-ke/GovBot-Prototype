@@ -18,6 +18,8 @@ import os
 from contextvars import ContextVar
 from sqlalchemy.ext.asyncio import AsyncSession
 import logging
+from pydantic_ai.models.groq import GroqModel
+from pydantic_ai.providers.groq import GroqProvider
 
 logger = logging.getLogger(__name__)
 
@@ -197,16 +199,37 @@ def generate_agent_with_events() -> Agent[None, Output]:
     Returns:
         Initialized agent with enhanced tools
     """
-    collection_yml = yaml.dump(collection_dict, default_flow_style=False)
+    logger.info("Starting agent creation process with event tracking")
     
-    # Initialize the agent with the system prompt and enhanced tools
-    agent = Agent(
-        model='openai:gpt-4o',
-        system_prompt=SYSTEM_PROMPT.format(collections=collection_yml),
-        tools=enhanced_tools,
-        output_type=Output
-    )
-    
+    if os.getenv("GROQ_MODEL_NAME") is None:
+        logger.info("Creating OpenAI-based agent with events (GROQ_MODEL_NAME not set)")
+        collection_yml = yaml.dump(collection_dict, default_flow_style=False)
+        logger.debug(f"Collections configuration: {len(collection_dict)} collections loaded")
+        
+        # Initialize the agent with the system prompt and enhanced tools
+        agent = Agent(
+            model='openai:gpt-4o',
+            system_prompt=SYSTEM_PROMPT.format(collections=collection_yml),
+            tools=enhanced_tools,
+            output_type=Output
+        )
+        logger.info("Successfully created OpenAI agent with events and model 'gpt-4o'")
+    else:
+        groq_model_name = os.getenv('GROQ_MODEL_NAME', 'llama-3.3-70b-versatile')
+        logger.info(f"Creating Groq-based agent with events and model: {groq_model_name}")
+        model = GroqModel(
+            model_name=groq_model_name,
+            provider=GroqProvider(api_key=os.getenv("GROQ_API_KEY"))
+        )
+        agent = Agent(
+            model=model,
+            system_prompt=SYSTEM_PROMPT,
+            tools=enhanced_tools,
+            output_type=Output
+        )
+        logger.info(f"Successfully created Groq agent with events and model '{groq_model_name}'")
+
+    logger.info(f"Agent with events created with {len(enhanced_tools)} tools available")
     return agent
 
 # Fallback to original agent if events are not needed
@@ -217,14 +240,35 @@ def generate_agent() -> Agent[None, Output]:
     Returns:
         Initialized agent
     """
-    collection_yml = yaml.dump(collection_dict, default_flow_style=False)
+    logger.info("Starting agent creation process")
     
-    # Initialize the agent with the system prompt and original tools
-    agent = Agent(
-        model='openai:gpt-4o',
-        system_prompt=SYSTEM_PROMPT.format(collections=collection_yml),
-        tools=tools,
-        output_type=Output
-    )
-    
+    if os.getenv("GROQ_MODEL_NAME") is None:
+        logger.info("Creating OpenAI-based agent (GROQ_MODEL_NAME not set)")
+        collection_yml = yaml.dump(collection_dict, default_flow_style=False)
+        logger.debug(f"Collections configuration: {len(collection_dict)} collections loaded")
+        
+        # Initialize the agent with the system prompt and original tools
+        agent = Agent(
+            model='openai:gpt-4o',
+            system_prompt=SYSTEM_PROMPT.format(collections=collection_yml),
+            tools=tools,
+            output_type=Output
+        )
+        logger.info("Successfully created OpenAI agent with model 'gpt-4o'")
+    else:
+        groq_model_name = os.getenv('GROQ_MODEL_NAME', 'llama-3.3-70b-versatile')
+        logger.info(f"Creating Groq-based agent with model: {groq_model_name}")
+        model = GroqModel(
+            model_name=groq_model_name,
+            provider=GroqProvider(api_key=os.getenv("GROQ_API_KEY"))
+        )
+        agent = Agent(
+            model=model,
+            system_prompt=SYSTEM_PROMPT,
+            tools=tools,
+            output_type=Output
+        )
+        logger.info(f"Successfully created Groq agent with model '{groq_model_name}'")
+
+    logger.info(f"Agent created with {len(tools)} tools available")
     return agent

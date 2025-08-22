@@ -76,7 +76,7 @@ services:
     restart: unless-stopped
 
   chroma:
-    image: chromadb/chroma:1.0.10.dev32
+    image: chromadb/chroma:latest
     ports:
       - "8050:8000"  # Map host port 8050 to container port 8000
     environment:

@@ -11,6 +11,16 @@ from pydantic_core import to_jsonable_python
 from app.core.rag.tool_loader import collection_dict
 import yaml
 import os
+from pydantic_ai.models.groq import GroqModel
+from pydantic_ai.providers.groq import GroqProvider
+import logging
+import asyncio
+
+from llama_index.core.agent.workflow import FunctionAgent    
+#from llama_index.llms.groq import Groq
+
+# Configure logger
+logger = logging.getLogger(__name__)
 
 
 #Settings.llm = OpenAI(
@@ -29,6 +39,19 @@ client = OpenAI(
 Settings.embed_model = OpenAIEmbedding(
     model="text-embedding-3-small", embed_batch_size=100
 )
+
+if os.getenv("GROQ_MODEL_NAME") is None:
+    Settings.llm = OpenAI(
+        model="gpt-4.1-mini",
+    )
+    logger.info("Using OpenAI model: gpt-4.1-mini")
+else:
+    groq_model_name = os.getenv('GROQ_MODEL_NAME', 'llama-3.3-70b-versatile')
+    Settings.llm = Groq(
+        model=groq_model_name, 
+        api_key=os.getenv("GROQ_API_KEY")
+    )
+    logger.info(f"Using Groq model: {groq_model_name}")
 
 
 
@@ -154,37 +177,94 @@ class Output(BaseModel):
         }
 
 
-def generate_agent() -> Agent[None, Output]:
+def generate_agent(tools = tools) -> Agent[None, Output]:
     """
     Generate an agent for the OpenAI model with the specified system prompt and retrievers.
     
     Returns:
         Initialized agent
     """
+    logger.info("Starting agent creation process")
+    
+    if os.getenv("GROQ_MODEL_NAME") is None:
+        logger.info("Creating OpenAI-based agent (GROQ_MODEL_NAME not set)")
+        collection_yml = yaml.dump(collection_dict, default_flow_style=False)
+        logger.debug(f"Collections configuration: {len(collection_dict)} collections loaded")
+        
+        # Initialize the agent with the system prompt and retrievers
+        agent = Agent(
+            model='openai:gpt-4o',
+            system_prompt=SYSTEM_PROMPT.format(collections=collection_yml),
+            tools=tools,
+            output_type=Output
+        )
+        logger.info("Successfully created OpenAI agent with model 'gpt-4o'")
+    else:
+        groq_model_name = os.getenv('GROQ_MODEL_NAME', 'llama-3.3-70b-versatile')
+        logger.info(f"Creating Groq-based agent with model: {groq_model_name}")
+        model = GroqModel(
+            model_name=groq_model_name,
+            provider=GroqProvider(api_key=os.getenv("GROQ_API_KEY"))
+        )
+        agent = Agent(
+            model=model,
+            system_prompt=SYSTEM_PROMPT,
+            tools=tools,
+            output_type=Output
+        )
+        logger.info(f"Successfully created Groq agent with model '{groq_model_name}'")
 
-    collection_yml = yaml.dump(collection_dict, default_flow_style=False)
-    # Initialize the agent with the system prompt and retrievers
-    agent = Agent(
-        model='openai:gpt-4o',
-        system_prompt=SYSTEM_PROMPT.format(collections=collection_yml),
-        tools=tools,
-        output_type=Output
+    logger.info(f"Agent created with {len(tools)} tools available")
+    return agent
+
+
+def generate_li_agent(tools = [], collection_dict:Dict[str, Any] = {}):
+    """
+    Generate an agent for the OpenAI model with the specified system prompt and retrievers.
+    
+    Returns:
+        Initialized agent
+    """
+    logger.info("Starting agent creation process")
+    
+    
+    agent = FunctionAgent(
+        #tools=tools,
+        llm=Settings.llm,
+        system_prompt=SYSTEM_PROMPT.format(collections=yaml.dump(collection_dict) if collection_dict else "No collections available"),
+        output_cls =Output,
+        tool_choice = "auto"
     )
-    
-    
+
+    logger.info(f"Agent created with {len(tools)} tools available")
     return agent
 
 
 if __name__ == "__main__":
     # Example usage
-
+    from llama_index.core.base.llms.types import ChatMessage
     
     agent = generate_agent()
+    li_agent = generate_li_agent(tools = [])
 
-    # Example 1: Starting a new conversation
-    result1 = agent.run_sync(
-        "What is the role of the Kenya Film Commission in the film industry?"
-    )
+    chat_history = ["Hi, what is the role of the Kenya Film Commission in the film industry?",
+                    "The Kenya Film Commission (KFC) plays a crucial role in developing and promoting the film industry in Kenya. It provides various services including...",
+                    "What are the funding opportunities available for filmmakers in Kenya?",
+                    "The Kenya Film Commission offers several funding opportunities for filmmakers, including grants, tax incentives, and support for film festivals and training programs. They also provide resources for script development and production financing."
+                    ]
+
+    
+    chat_history_as_messages = [
+        ChatMessage(role="user", content=msg) if i % 2 == 0 else ChatMessage(role="assistant", content=msg)
+        for i, msg in enumerate(chat_history)
+    ]
+    async def main():
+        response = await li_agent.run("what was my first message?", chat_history=chat_history_as_messages)
+        print(response)
+        return response
+    result1 = asyncio.run(main())
+
+    result2 = asyncio.run(li_agent.run("hello world", chat_history=[]))
 
     
     result1.usage().__dict__

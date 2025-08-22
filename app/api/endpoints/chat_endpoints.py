@@ -431,6 +431,7 @@ def convert_usage(pydantic_ai_usage) -> Optional[Usage]:
         return None
     
     usage_dict = pydantic_ai_usage.__dict__
+    details = usage_dict.get('details') or {}
     
     return Usage(
         requests=usage_dict.get('requests', 0),
@@ -438,10 +439,10 @@ def convert_usage(pydantic_ai_usage) -> Optional[Usage]:
         response_tokens=usage_dict.get('response_tokens', 0),
         total_tokens=usage_dict.get('total_tokens', 0),
         details=UsageDetails(
-            accepted_prediction_tokens=usage_dict.get('details', {}).get('accepted_prediction_tokens', 0),
-            audio_tokens=usage_dict.get('details', {}).get('audio_tokens', 0),
-            reasoning_tokens=usage_dict.get('details', {}).get('reasoning_tokens', 0),
-            rejected_prediction_tokens=usage_dict.get('details', {}).get('rejected_prediction_tokens', 0),
-            cached_tokens=usage_dict.get('details', {}).get('cached_tokens', 0)
+            accepted_prediction_tokens=details.get('accepted_prediction_tokens', 0),
+            audio_tokens=details.get('audio_tokens', 0),
+            reasoning_tokens=details.get('reasoning_tokens', 0),
+            rejected_prediction_tokens=details.get('rejected_prediction_tokens', 0),
+            cached_tokens=details.get('cached_tokens', 0)
         )
     )
