@@ -14,24 +14,50 @@ All API endpoints (except public health checks) require authentication via the `
 X-API-Key: your-secure-api-key-here
 ```
 
-### API Key Types
+### API Key Structure
 
-The system supports multiple API key types with different permission levels:
+API keys are validated against a predefined set of valid keys with associated permissions:
+
+```python
+VALID_API_KEYS = {
+    "gs-master-key": {
+        "name": "master",
+        "permissions": ["read", "write", "delete", "admin"],
+        "description": "Master API key with full access"
+    },
+    "gs-admin-key": {
+        "name": "admin", 
+        "permissions": ["read", "write", "admin"],
+        "description": "Admin API key with management access"
+    }
+}
+```
+
+### API Key Types
 
 #### Master API Key
 - **Environment Variable**: `GOVSTACK_API_KEY`
-- **Permissions**: read, write, delete (full access)
-- **Use Case**: Administrative operations, full system access
-- **Default**: Configured in `.env` files
+- **Permissions**: read, write, delete, admin (full access)
+- **Use Case**: Full system administration, all operations
+- **Default Development**: `gs-dev-master-key-12345`
 
 #### Admin API Key  
 - **Environment Variable**: `GOVSTACK_ADMIN_API_KEY`
-- **Permissions**: read, write (no delete)
-- **Use Case**: Application operations, content management
-- **Default**: Configured in `.env` files
+- **Permissions**: read, write, admin (no delete)
+- **Use Case**: Content management, audit log access
+- **Default Development**: `gs-dev-admin-key-67890`
 
-#### Custom API Keys
-Additional API keys can be configured programmatically with specific permissions.
+### Security Dependencies
+
+The security system provides FastAPI dependencies for permission checking:
+
+```python
+# Permission-based dependencies
+require_read_permission()    # GET operations
+require_write_permission()   # POST operations  
+require_delete_permission()  # DELETE operations
+require_admin_permission()   # Audit logs, admin functions
+```
 
 ## Permission Levels
 
@@ -59,6 +85,68 @@ Additional API keys can be configured programmatically with specific permissions
   - Remove documents
   - Delete chat sessions
   - Clean up resources
+
+### Admin Permission
+- **Endpoints**: Admin-specific endpoints
+- **Operations**:
+  - Access audit logs
+  - View system statistics
+  - Administrative functions
+
+## Audit Trail Integration
+
+### Automatic Audit Logging
+
+The security system automatically logs all authenticated actions:
+
+```python
+async def log_audit_action(
+    user_id: str,
+    action: str,
+    resource_type: str,
+    resource_id: Optional[str] = None,
+    details: Optional[dict] = None,
+    request: Optional[Request] = None,
+    api_key_name: Optional[str] = None
+):
+    """Log user actions for audit trail."""
+```
+
+### Audit Information Captured
+
+For every authenticated request, the system records:
+- **User ID**: API key name or user identifier
+- **Action**: Operation performed (e.g., 'upload', 'delete', 'chat')
+- **Resource Type**: Type of resource affected (e.g., 'document', 'chat')
+- **Resource ID**: Specific resource identifier
+- **IP Address**: Client IP address
+- **User Agent**: Client browser/application information
+- **Timestamp**: When the action occurred
+- **Details**: Additional context (e.g., file size, collection ID)
+
+### Security Dependencies with Audit
+
+```python
+# Create audit-enabled dependency
+def create_audit_dependency(action: str, resource_type: str):
+    """Create dependency that requires permission and logs audit trail."""
+    
+    async def audit_dependency(
+        request: Request,
+        api_key_info: APIKeyInfo = Depends(require_permission)
+    ):
+        # Log the action
+        await log_audit_action(
+            user_id=api_key_info.name,
+            action=action,
+            resource_type=resource_type,
+            request=request,
+            api_key_name=api_key_info.name
+        )
+        return api_key_info
+    
+    return audit_dependency
+```
 
 ## Security Configuration
 

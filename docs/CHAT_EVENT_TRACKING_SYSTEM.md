@@ -50,15 +50,57 @@ const data = await response.json();
 
 ### 3. Event Types
 
-The system tracks these event types:
+The system tracks these event types with user-friendly messages:
 
-- **message_received**: Message validation and processing start
-- **agent_thinking**: AI analysis and decision making
-- **tool_search_documents**: Document search operations
-- **response_generation**: Final response creation
-- **saving_message**: Database persistence
-- **loading_history**: Conversation history retrieval
-- **error**: Any errors that occur
+#### Core Chat Processing
+- **message_received**: 
+  - Started: "📩 Processing your message..."
+  - Completed: "✅ Message received and validated"
+
+#### Agent Processing
+- **agent_thinking**: 
+  - Started: "🤔 AI is analyzing your question..."
+  - Progress: "🧠 Understanding context and requirements..."
+  - Completed: "✅ Analysis complete"
+
+#### Tool Execution
+- **tool_search_documents**: 
+  - Started: "📄 Searching relevant documents..."
+  - Progress: "🔍 Found {count} potential matches..."
+  - Completed: "✅ Document search complete"
+
+- **tool_search_webpages**: 
+  - Started: "🌐 Searching web content..."
+  - Progress: "🔍 Analyzing {count} web pages..."
+  - Completed: "✅ Web search complete"
+
+- **tool_collection_stats**: 
+  - Started: "📊 Gathering collection statistics..."
+  - Completed: "✅ Statistics retrieved"
+
+- **tool_extract_text**: 
+  - Started: "📝 Extracting relevant text content..."
+  - Progress: "🔍 Processing {count} sources..."
+  - Completed: "✅ Text extraction complete"
+
+#### Response Generation
+- **response_generation**: 
+  - Started: "✍️ Generating response..."
+  - Progress: "📝 Crafting answer with sources..."
+  - Completed: "✅ Response ready"
+
+#### Database Operations
+- **saving_message**: 
+  - Started: "💾 Saving conversation..."
+  - Completed: "✅ Conversation saved"
+
+- **loading_history**: 
+  - Started: "📚 Loading conversation history..."
+  - Completed: "✅ History loaded"
+
+#### Error Handling
+- **error**: 
+  - Failed: "❌ {error_message}"
 
 ## API Endpoints
 

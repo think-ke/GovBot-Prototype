@@ -70,7 +70,7 @@ ALTER TABLE webpages ADD COLUMN api_key_name VARCHAR(100);
 ### Audit Log Endpoints
 All audit endpoints require admin permissions (`X-API-Key` with admin rights).
 
-#### `GET /admin/audit-logs`
+#### `GET /audit-logs`
 List audit logs with filtering and pagination.
 
 **Query Parameters:**
@@ -85,14 +85,55 @@ List audit logs with filtering and pagination.
 **Example:**
 ```bash
 curl -H "X-API-Key: gs-dev-admin-key-67890" \
-  "http://localhost:5000/admin/audit-logs?action=upload&hours_ago=24&limit=10"
+  "http://localhost:5000/audit-logs?action=upload&hours_ago=24&limit=10"
 ```
 
-#### `GET /admin/audit-logs/summary`
+#### `GET /audit-logs/summary`
 Get audit summary statistics.
 
 **Query Parameters:**
 - `hours_ago` (int): Time period in hours (default: 24, max: 8760)
+
+**Response:**
+```json
+{
+  "total_actions": 45,
+  "unique_users": 8,
+  "action_counts": {
+    "upload": 20,
+    "delete": 5,
+    "crawl_start": 15,
+    "crawl_complete": 5
+  },
+  "resource_type_counts": {
+    "document": 25,
+    "webpage": 20
+  },
+  "recent_activity": [
+    {
+      "id": 1,
+      "user_id": "master",
+      "action": "upload",
+      "resource_type": "document",
+      "resource_id": "doc_123",
+      "details": {"filename": "policy.pdf"},
+      "timestamp": "2023-10-20T14:30:15.123456Z"
+    }
+  ]
+}
+```
+
+#### `GET /audit-logs/user/{user_id}`
+Get audit logs for a specific user.
+
+**Query Parameters:**
+- `skip`, `limit`, `hours_ago`: Same as main endpoint
+
+#### `GET /audit-logs/resource/{resource_type}/{resource_id}`
+Get audit logs for a specific resource.
+
+**Query Parameters:**
+- `skip`, `limit`, `hours_ago`: Same as main endpoint
 
 **Response:**
 ```json
