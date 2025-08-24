@@ -4,7 +4,7 @@ Chat persistence service for storing and retrieving chat history.
 import logging
 from datetime import datetime, timezone
 from typing import Dict, List, Optional, Any, Union
-from sqlalchemy import select, update, and_
+from sqlalchemy import select, update, and_, delete
 from sqlalchemy.ext.asyncio import AsyncSession
 from uuid import uuid4
 import uuid
@@ -352,3 +352,154 @@ class ChatPersistenceService:
         except Exception as e:
             logger.error(f"Error loading messages: {str(e)}")
             return None
+        
+    @staticmethod
+    async def get_or_create_user(db: AsyncSession, user_id: str):
+        """
+        Retrieve or create a user.
+        
+        Args:
+            db: Database session
+            user_id: The user ID to retrieve or create
+            
+        Returns:
+            The user object
+        """
+        try:
+            # Check if the user already exists
+            query = select(Chat).where(Chat.user_id == user_id)
+            result = await db.execute(query)
+            user = result.scalars().first()
+            
+            if user:
+                logger.info(f"Retrieved existing user with ID: {user_id}")
+                return user
+            
+            # If user doesn't exist, create a new one
+            user = Chat(
+                user_id=user_id,
+                created_at=datetime.now(timezone.utc),
+                updated_at=datetime.now(timezone.utc)
+            )
+            db.add(user)
+            await db.commit()
+            await db.refresh(user)
+            
+            logger.info(f"Created new user with ID: {user_id}")
+            return user
+            
+        except Exception as e:
+            logger.error(f"Error retrieving or creating user: {str(e)}")
+            return None
+
+    @staticmethod
+    async def get_or_create_session(db: AsyncSession, session_id: str, user_id: str):
+        """
+        Retrieve or create a session.
+        
+        Args:
+            db: Database session
+            session_id: The session ID to retrieve or create
+            user_id: The user ID associated with the session
+            
+        Returns:
+            The session ID that was provided or created
+        """
+        try:
+            # Check if the session already exists
+            query = select(Chat).where(Chat.session_id == session_id)
+            result = await db.execute(query)
+            chat = result.scalars().first()
+            
+            if chat:
+                logger.info(f"Retrieved existing session with ID: {session_id}")
+                return session_id
+            
+            # If session doesn't exist, create a new one
+            session_id = str(uuid4())
+            chat = Chat(
+                session_id=session_id,
+                user_id=user_id,
+                created_at=datetime.now(timezone.utc),
+                updated_at=datetime.now(timezone.utc)
+            )
+            db.add(chat)
+            await db.commit()
+            await db.refresh(chat)
+            
+            logger.info(f"Created new session with ID: {session_id}")
+            return session_id
+            
+        except Exception as e:
+            logger.error(f"Error retrieving or creating session: {str(e)}")
+            return None
+
+    @staticmethod
+    async def get_chat_history(db: AsyncSession, session_id: str) -> List[Dict[str, Any]]:
+        """
+        Retrieve chat history for a session.
+        
+        Args:
+            db: Database session
+            session_id: The session ID to retrieve history for
+            
+        Returns:
+            List of message dictionaries containing message_id, message_type, message_object, and timestamp
+        """
+        try:
+            chat = await ChatPersistenceService.get_chat_by_session_id(db, session_id)
+            if not chat:
+                return []
+
+            query = select(ChatMessage).where(ChatMessage.chat_id == chat.id).order_by(ChatMessage.timestamp)
+            result = await db.execute(query)
+            messages = result.scalars().all()
+
+            return [
+                {
+                    "message_id": message.message_id,
+                    "message_type": message.message_type,
+                    "message_object": message.message_object,
+                    "timestamp": message.timestamp.isoformat(),
+                }
+                for message in messages
+            ]
+        except Exception as e:
+            logger.error(f"Error retrieving chat history: {e}")
+            return []
+
+    @staticmethod
+    async def delete_chat(db: AsyncSession, session_id: str):
+        """
+        Delete a chat session and its associated messages.
+        
+        Args:
+            db: Database session
+            session_id: The session ID to delete
+            
+        Returns:
+            True if successful, False otherwise
+        """
+        try:
+            chat = await ChatPersistenceService.get_chat_by_session_id(db, session_id)
+            if not chat:
+                logger.error(f"Chat session {session_id} not found")
+                return False
+
+            # Delete messages
+            await db.execute(
+                delete(ChatMessage).where(ChatMessage.chat_id == chat.id)
+            )
+
+            # Delete chat
+            await db.execute(
+                delete(Chat).where(Chat.id == chat.id)
+            )
+
+            await db.commit()
+            logger.info(f"Deleted chat session {session_id}")
+            return True
+        except Exception as e:
+            logger.error(f"Error deleting chat session: {e}")
+            await db.rollback()
+            return False

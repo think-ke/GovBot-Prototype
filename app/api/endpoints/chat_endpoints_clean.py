@@ -148,9 +148,6 @@ async def process_chat(
             session_id=session_id
         )
         
-        logger.info(f"Agent response for session {session_id}: {response.output.answer}")
-
-
         # Extract the structured output
         agent_output = response.output
         

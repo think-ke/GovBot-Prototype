@@ -1,6 +1,6 @@
 import chromadb
 import os
-from typing import Dict, List, Any, Callable
+from typing import Dict, List, Any, Callable, Optional
 from app.utils.prompts import QUERY_ENGINE_PROMPT
 from llama_index.core import VectorStoreIndex, StorageContext, Settings
 from llama_index.vector_stores.chroma import ChromaVectorStore
@@ -43,15 +43,24 @@ collection_dict: Dict[str, Dict[str, str]] = {
 }
 
 
-logger.info("Loading ChromaDB client")
-# Initialize the ChromaDB client
-remote_db: chromadb.HttpClient = chromadb.HttpClient(
-    host=os.getenv("CHROMA_HOST", "localhost"),
-    port=int(os.getenv("CHROMA_PORT", "8050")),
-    settings=ChromaSettings(
-        chroma_client_auth_provider="chromadb.auth.basic_authn.BasicAuthClientProvider",
-        chroma_client_auth_credentials=f"{os.getenv('CHROMA_USERNAME')}:{os.getenv('CHROMA_PASSWORD')}")
-)
+logger.info("ChromaDB client will be initialized on first use")
+
+# ChromaDB client will be initialized lazily
+remote_db: Optional[chromadb.HttpClient] = None
+
+def get_chroma_client() -> chromadb.HttpClient:
+    """Get or create ChromaDB client connection."""
+    global remote_db
+    if remote_db is None:
+        logger.info("Initializing ChromaDB client")
+        remote_db = chromadb.HttpClient(
+            host=os.getenv("CHROMA_HOST", "localhost"),
+            port=int(os.getenv("CHROMA_PORT", "8050")),
+            settings=ChromaSettings(
+                chroma_client_auth_provider="chromadb.auth.basic_authn.BasicAuthClientProvider",
+                chroma_client_auth_credentials=f"{os.getenv('CHROMA_USERNAME')}:{os.getenv('CHROMA_PASSWORD')}")
+        )
+    return remote_db
 
 
 embed_model = OpenAIEmbedding(
@@ -74,9 +83,12 @@ def load_indexes() -> Dict[str, VectorStoreIndex]:
     logger.info("Loading indexes from ChromaDB")
 
     index_dict: Dict[str, VectorStoreIndex] = {}
+    
+    # Get the ChromaDB client
+    client = get_chroma_client()
 
     for name, entry in collection_dict.items():
-        collection = remote_db.get_or_create_collection(
+        collection = client.get_or_create_collection(
             name=name
         )
 
@@ -94,7 +106,15 @@ def load_indexes() -> Dict[str, VectorStoreIndex]:
     
     return index_dict
 
-index_dict: Dict[str, VectorStoreIndex] = load_indexes()
+# Index dictionary will be loaded lazily
+index_dict: Optional[Dict[str, VectorStoreIndex]] = None
+
+def get_index_dict() -> Dict[str, VectorStoreIndex]:
+    """Get or create the index dictionary."""
+    global index_dict
+    if index_dict is None:
+        index_dict = load_indexes()
+    return index_dict
 
 async def query_kfc(query: str) -> List[NodeWithScore]:
     """
@@ -111,7 +131,8 @@ async def query_kfc(query: str) -> List[NodeWithScore]:
     """
     logger.info("Querying Kenya Film Commission collection")
 
-    index = index_dict["kfc"]
+    indexes = get_index_dict()
+    index = indexes["kfc"]
     retriever = index.as_retriever()  
 
     return await retriever.aretrieve(query)
@@ -132,7 +153,8 @@ async def query_kfcb(query: str) -> List[NodeWithScore]:
     """
     logger.info("Querying Kenya Film Classification Board collection")
 
-    index = index_dict["kfcb"]
+    indexes = get_index_dict()
+    index = indexes["kfcb"]
     retriever = index.as_retriever()  
 
     return await retriever.aretrieve(query)
@@ -144,7 +166,8 @@ async def query_brs(query: str) -> List[NodeWithScore]:
     """
     logger.info("Querying Business Registration Service collection")
 
-    index = index_dict["brs"]
+    indexes = get_index_dict()
+    index = indexes["brs"]
     retriever = index.as_retriever()  
 
     return await retriever.aretrieve(query)
@@ -155,7 +178,8 @@ async def query_odpc(query: str) -> List[NodeWithScore]:
     """
     logger.info("Querying Office of the Data Protection Commissioner collection")
 
-    index = index_dict["odpc"]
+    indexes = get_index_dict()
+    index = indexes["odpc"]
     retriever = index.as_retriever()  
 
     return await retriever.aretrieve(query)
