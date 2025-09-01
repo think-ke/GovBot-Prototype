@@ -9,9 +9,7 @@ from sqlalchemy import func, desc, asc, and_, or_, text
 from sqlalchemy.orm import selectinload
 from sqlalchemy.sql import select
 
-from .models import Chat, ChatMessage, Document, Webpage
-# Import MessageRating for explicit rating integration
-from app.db.models.message_rating import MessageRating
+from .models import Chat, ChatMessage, Document, Webpage, MessageRating
 from .schemas import (
     UserDemographics, SessionFrequency, TrafficMetrics, SessionDuration,
     ConversationFlow, ROIMetrics, ContainmentRate, TrendData, DistributionData,
@@ -605,14 +603,14 @@ class AnalyticsService:
         
         if ratings:
             # Calculate average explicit rating
-            rating_values = [rating.rating for rating in ratings]
+            rating_values = [int(getattr(r, 'rating')) for r in ratings]
             explicit_rating_score = round(sum(rating_values) / len(rating_values), 2)
             
             # Create rating distribution (1-5 stars)
             rating_counts = {1: 0, 2: 0, 3: 0, 4: 0, 5: 0}
-            for rating in rating_values:
-                if 1 <= rating <= 5:
-                    rating_counts[rating] += 1
+            for rv in rating_values:
+                if 1 <= rv <= 5:
+                    rating_counts[rv] += 1
             
             rating_distribution = [
                 DistributionData(
@@ -638,9 +636,11 @@ class AnalyticsService:
             for rating in ratings:
                 # Try to find corresponding sentiment analysis for this message/session
                 for message in messages:
-                    if (message.chat.session_id == rating.session_id and 
-                        hasattr(message, 'message_id') and 
-                        message.message_id == rating.message_id):
+                    try:
+                        same_session = str(getattr(message.chat, 'session_id', '')) == str(getattr(rating, 'session_id', ''))
+                    except Exception:
+                        same_session = False
+                    if same_session and str(getattr(message, 'message_id', '')) == str(getattr(rating, 'message_id', '')):
                         
                         # Extract message content for sentiment analysis
                         message_content = ""
@@ -653,7 +653,7 @@ class AnalyticsService:
                             sentiment_scores_for_correlation = sentiment_analyzer.analyze_sentiment(message_content)
                             overlapping_data.append({
                                 'sentiment': sentiment_scores_for_correlation['compound'],
-                                'rating': rating.rating
+                                'rating': int(getattr(rating, 'rating'))
                             })
                         break
             

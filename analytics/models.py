@@ -4,7 +4,7 @@ Database models for analytics service.
 
 from datetime import datetime, timezone
 from typing import Dict, List, Optional, Any
-from sqlalchemy import Column, Integer, String, DateTime, JSON, ForeignKey, Text, Boolean
+from sqlalchemy import Column, Integer, String, DateTime, JSON, ForeignKey, Text, Boolean, Index
 from sqlalchemy.orm import relationship
 from sqlalchemy.ext.declarative import declarative_base
 
@@ -81,3 +81,31 @@ class Webpage(Base):
     collection_id = Column(String(64), nullable=True, index=True)  # Identifier for crawl jobs/collections
     is_indexed = Column(Boolean, default=False, nullable=False)  # Track whether the webpage has been indexed
     indexed_at = Column(DateTime(timezone=True), nullable=True)  # When the webpage was indexed
+
+
+class MessageRating(Base):
+    """
+    Local ORM model mirroring the message_ratings table from the main app.
+    This avoids importing the main `app` package inside the analytics service container.
+    """
+    __tablename__ = "message_ratings"
+
+    id = Column(Integer, primary_key=True, index=True)
+    session_id = Column(String(64), nullable=False, index=True)
+    message_id = Column(String(64), nullable=False, index=True)
+    user_id = Column(String(64), nullable=True, index=True)
+
+    # Rating information
+    rating = Column(Integer, nullable=False)
+    feedback_text = Column(Text, nullable=True)
+
+    # Metadata
+    created_at = Column(DateTime(timezone=True))
+    updated_at = Column(DateTime(timezone=True))
+    rating_metadata = Column(JSON, nullable=True)
+
+    __table_args__ = (
+        Index('idx_session_message_rating', 'session_id', 'message_id'),
+        Index('idx_rating_timestamp', 'rating', 'created_at'),
+        Index('idx_user_ratings', 'user_id', 'created_at'),
+    )

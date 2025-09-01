@@ -6,7 +6,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 import logging
 
-from .routers import user_analytics, usage_analytics, conversation_analytics, business_analytics
+from analytics.routers import user_analytics, usage_analytics, conversation_analytics, business_analytics
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
