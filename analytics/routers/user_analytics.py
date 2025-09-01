@@ -8,7 +8,7 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..database import get_db
-from ..schemas import UserDemographics, SessionFrequency, UserSentiment
+from ..schemas import UserDemographics, SessionFrequency, UserSentiment, RetentionData, GeographicDistribution
 from ..services import AnalyticsService
 
 router = APIRouter()
@@ -78,7 +78,7 @@ async def get_user_sentiment(
     """
     return await AnalyticsService.get_user_sentiment(db, start_date, end_date)
 
-@router.get("/retention")
+@router.get("/retention", response_model=RetentionData)
 async def get_user_retention(
     cohort_size: int = Query(30, description="Cohort size in days"),
     db: AsyncSession = Depends(get_db)
@@ -92,12 +92,12 @@ async def get_user_retention(
     - User lifecycle insights
     """
     # Placeholder for retention analysis
-    return {
-        "day_1_retention": 65.5,
-        "day_7_retention": 42.3,
-        "day_30_retention": 28.7,
-        "cohort_analysis": []
-    }
+    return RetentionData(
+        day_1_retention=65.5,
+        day_7_retention=42.3,
+        day_30_retention=28.7,
+        cohort_analysis=[]
+    )
 
 @router.get("/geographic")
 async def get_geographic_distribution(

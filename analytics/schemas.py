@@ -140,3 +140,73 @@ class BusinessIntelligenceDashboard(BaseModel):
     comparative_analysis: Dict[str, Any]
     predictive_insights: Dict[str, Any]
     forecasting: Dict[str, Any]
+
+# ===== New/Extended Schemas for Frontend Alignment =====
+
+# User - Retention
+class RetentionData(BaseModel):
+    day_1_retention: float
+    day_7_retention: float
+    day_30_retention: float
+    cohort_analysis: List[Dict[str, Any]] = []
+
+# User - Geographic / Devices (optional)
+class GeographicDistribution(BaseModel):
+    location: str
+    users: int
+    percentage: float
+
+class DeviceDistribution(BaseModel):
+    name: str
+    value: float  # percentage 0-100
+
+# Usage - Hourly traffic and response times
+class HourlyTrafficPoint(BaseModel):
+    hour: str  # "00".."23"
+    sessions: int
+    messages: int
+
+class ResponseTimesPoint(BaseModel):
+    day: datetime | str  # ISO date or date string
+    p50: float
+    p95: float
+    p99: float
+
+class PeakHoursResponse(BaseModel):
+    peak_hours: List[Dict[str, int]]  # {hour, sessions}
+    analysis_period: str
+    timezone: str
+
+class ErrorAnalysis(BaseModel):
+    error_rate: float
+    total_errors: int
+    error_types: Dict[str, int]
+    analysis_period: str
+
+# Conversation - Drop-offs, Sentiment trends, Knowledge gaps, Summary
+class DropOffPoint(BaseModel):
+    turn: int
+    abandonment_rate: float
+
+class DropOffData(BaseModel):
+    drop_off_points: List[DropOffPoint]
+    common_triggers: List[str]
+
+class SentimentTrends(BaseModel):
+    sentiment_distribution: Dict[str, float]  # {positive, neutral, negative} as percentages
+    satisfaction_indicators: List[str]
+
+class KnowledgeGap(BaseModel):
+    topic: str
+    query_frequency: int
+    success_rate: float  # percentage 0-100
+    example_queries: List[str]
+
+class KnowledgeGaps(BaseModel):
+    knowledge_gaps: List[KnowledgeGap]
+    recommendations: Optional[List[str]] = None
+
+class ConversationSummary(BaseModel):
+    total_conversations: int
+    avg_turns: float
+    completion_rate: float

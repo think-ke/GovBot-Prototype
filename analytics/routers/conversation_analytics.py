@@ -8,10 +8,69 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..database import get_db
-from ..schemas import IntentAnalysis, ConversationFlow, DocumentRetrieval
+from ..schemas import (
+    IntentAnalysis,
+    ConversationFlow,
+    DocumentRetrieval,
+    DropOffData,
+    SentimentTrends,
+    KnowledgeGaps,
+    ConversationSummary,
+    DropOffPoint,
+    KnowledgeGap,
+)
 from ..services import AnalyticsService
 
 router = APIRouter()
+
+@router.get("/summary", response_model=ConversationSummary)
+async def get_conversation_summary(
+    start_date: Optional[datetime] = Query(None, description="Start date for analysis"),
+    end_date: Optional[datetime] = Query(None, description="End date for analysis"),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Get conversation summary KPIs.
+    Returns total conversations, average turns per conversation, and an estimated completion rate.
+    """
+    # Leverage AnalyticsService for underlying computations where possible
+    from ..services import AnalyticsService
+
+    flows = await AnalyticsService.get_conversation_turn_analysis(db, start_date, end_date)
+
+    # Compute totals using Chats within range
+    if not end_date:
+        end_date = datetime.utcnow()
+    if not start_date:
+        start_date = end_date - timedelta(days=30)
+
+    from sqlalchemy import func, and_
+    from ..models import Chat, ChatMessage
+    from sqlalchemy.sql import select
+
+    # Total conversations
+    total_q = select(func.count(Chat.id)).where(
+        and_(Chat.created_at >= start_date, Chat.created_at <= end_date)
+    )
+    total_res = await db.execute(total_q)
+    total_conversations = total_res.scalar() or 0
+
+    # Average turns (messages per chat)
+    turns_q = select(Chat.id, func.count(ChatMessage.id).label("msg_count")).join(ChatMessage).where(
+        and_(Chat.created_at >= start_date, Chat.created_at <= end_date)
+    ).group_by(Chat.id)
+    turns_res = await db.execute(turns_q)
+    rows = turns_res.fetchall()
+    avg_turns = (sum(r.msg_count for r in rows) / len(rows)) if rows else 0.0
+
+    # Completion rate heuristic: reuse completion_rate from flows buckets (weighted average by bucket size not available here), fallback to mean
+    completion_rate = (sum(f.completion_rate for f in flows) / len(flows)) if flows else 0.0
+
+    return ConversationSummary(
+        total_conversations=total_conversations,
+        avg_turns=round(avg_turns, 2),
+        completion_rate=round(completion_rate, 1)
+    )
 
 @router.get("/flows", response_model=List[ConversationFlow])
 async def get_conversation_flows(
@@ -102,7 +161,7 @@ async def get_document_retrieval_analysis(
         )
     ]
 
-@router.get("/drop-offs")
+@router.get("/drop-offs", response_model=DropOffData)
 async def get_conversation_drop_offs(
     start_date: Optional[datetime] = Query(None, description="Start date for analysis"),
     end_date: Optional[datetime] = Query(None, description="End date for analysis"),
@@ -116,21 +175,21 @@ async def get_conversation_drop_offs(
     - Turn numbers with highest drop-off
     - Escalation triggers
     """
-    return {
-        "drop_off_points": [
-            {"turn": 1, "abandonment_rate": 15.2},
-            {"turn": 2, "abandonment_rate": 8.7},
-            {"turn": 3, "abandonment_rate": 12.1},
-            {"turn": 5, "abandonment_rate": 18.9}
+    return DropOffData(
+        drop_off_points=[
+            DropOffPoint(turn=1, abandonment_rate=15.2),
+            DropOffPoint(turn=2, abandonment_rate=8.7),
+            DropOffPoint(turn=3, abandonment_rate=12.1),
+            DropOffPoint(turn=5, abandonment_rate=18.9),
         ],
-        "common_triggers": [
+        common_triggers=[
             "complex_query",
             "no_relevant_results",
-            "technical_issues"
-        ]
-    }
+            "technical_issues",
+        ],
+    )
 
-@router.get("/sentiment-trends")
+@router.get("/sentiment-trends", response_model=SentimentTrends)
 async def get_conversation_sentiment_trends(
     start_date: Optional[datetime] = Query(None, description="Start date for analysis"),
     end_date: Optional[datetime] = Query(None, description="End date for analysis"),
@@ -144,20 +203,20 @@ async def get_conversation_sentiment_trends(
     - Satisfaction indicators
     - Emotional journey patterns
     """
-    return {
-        "sentiment_distribution": {
+    return SentimentTrends(
+        sentiment_distribution={
             "positive": 65.5,
             "neutral": 28.3,
-            "negative": 6.2
+            "negative": 6.2,
         },
-        "satisfaction_indicators": [
+        satisfaction_indicators=[
             "thank_you_expressions",
             "successful_completion",
-            "positive_feedback"
-        ]
-    }
+            "positive_feedback",
+        ],
+    )
 
-@router.get("/knowledge-gaps")
+@router.get("/knowledge-gaps", response_model=KnowledgeGaps)
 async def get_knowledge_gaps(
     start_date: Optional[datetime] = Query(None, description="Start date for analysis"),
     end_date: Optional[datetime] = Query(None, description="End date for analysis"),
@@ -172,29 +231,29 @@ async def get_knowledge_gaps(
     - Common unanswered questions
     - Content improvement opportunities
     """
-    return {
-        "knowledge_gaps": [
-            {
-                "topic": "tax_exemption_process",
-                "query_frequency": 45,
-                "success_rate": 0.25,
-                "example_queries": [
+    return KnowledgeGaps(
+        knowledge_gaps=[
+            KnowledgeGap(
+                topic="tax_exemption_process",
+                query_frequency=45,
+                success_rate=62.5,  # percentage
+                example_queries=[
                     "How to apply for tax exemption?",
-                    "Tax exemption eligibility criteria"
-                ]
-            },
-            {
-                "topic": "business_permit_renewal",
-                "query_frequency": 38,
-                "success_rate": 0.28,
-                "example_queries": [
+                    "Tax exemption eligibility criteria",
+                ],
+            ),
+            KnowledgeGap(
+                topic="business_permit_renewal",
+                query_frequency=38,
+                success_rate=71.2,  # percentage
+                example_queries=[
                     "Business permit renewal process",
-                    "Documents needed for permit renewal"
-                ]
-            }
+                    "Documents needed for permit renewal",
+                ],
+            ),
         ],
-        "recommendations": [
+        recommendations=[
             "Add more content about tax exemption processes",
-            "Create detailed business permit guides"
-        ]
-    }
+            "Create detailed business permit guides",
+        ],
+    )
