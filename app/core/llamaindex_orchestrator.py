@@ -233,46 +233,94 @@ async def query_odpc_tool(query: str) -> str:
         return f"Error retrieving information from Office of the Data Protection Commissioner: {str(e)}"
 
 
-def create_llamaindex_tools() -> List[FunctionTool]:
-    """Create LlamaIndex FunctionTool objects from our async tool functions."""
-    tools = [
-        FunctionTool.from_defaults(
+def create_llamaindex_tools(agencies: Optional[Union[str, List[str]]] = None) -> List[FunctionTool]:
+    """
+    Create LlamaIndex FunctionTool objects from our async tool functions.
+    
+    Args:
+        agencies: Optional agency filter. Can be:
+                 - None: Returns all tools
+                 - str: Returns tool for single agency (e.g., "kfc", "kfcb", "brs", "odpc")
+                 - List[str]: Returns tools for multiple agencies
+    
+    Returns:
+        List of FunctionTool objects filtered by agencies
+    """
+    # Define all available tools
+    all_tools = {
+        "kfc": FunctionTool.from_defaults(
             async_fn=query_kfc_tool,
             name="query_kfc",
             description="Query the Kenya Film Commission collection for information about film industry services, support, licensing, and regulations in Kenya."
         ),
-        FunctionTool.from_defaults(
+        "kfcb": FunctionTool.from_defaults(
             async_fn=query_kfcb_tool,
             name="query_kfcb", 
             description="Query the Kenya Film Classification Board collection for information about film classification, content regulation, and broadcast compliance in Kenya."
         ),
-        FunctionTool.from_defaults(
+        "brs": FunctionTool.from_defaults(
             async_fn=query_brs_tool,
             name="query_brs",
             description="Query the Business Registration Service collection for information about business registration, company formation, and related government services in Kenya."
         ),
-        FunctionTool.from_defaults(
+        "odpc": FunctionTool.from_defaults(
             async_fn=query_odpc_tool,
             name="query_odpc",
             description="Query the Office of the Data Protection Commissioner collection for information about data protection laws, privacy rights, and compliance requirements in Kenya."
         )
-    ]
+    }
     
-    logger.info(f"Created {len(tools)} LlamaIndex FunctionTools")
-    return tools
+    # Filter tools based on agencies parameter
+    if agencies is None:
+        # Return all tools
+        selected_tools = list(all_tools.values())
+    elif isinstance(agencies, str):
+        # Single agency
+        agencies_lower = agencies.lower()
+        if agencies_lower in all_tools:
+            selected_tools = [all_tools[agencies_lower]]
+        else:
+            logger.warning(f"Unknown agency '{agencies}'. Available agencies: {list(all_tools.keys())}")
+            selected_tools = list(all_tools.values())
+    elif isinstance(agencies, list):
+        # Multiple agencies
+        selected_tools = []
+        for agency in agencies:
+            agency_lower = agency.lower()
+            if agency_lower in all_tools:
+                selected_tools.append(all_tools[agency_lower])
+            else:
+                logger.warning(f"Unknown agency '{agency}'. Available agencies: {list(all_tools.keys())}")
+        
+        # If no valid agencies were found, return all tools
+        if not selected_tools:
+            logger.warning("No valid agencies found. Returning all tools.")
+            selected_tools = list(all_tools.values())
+    else:
+        logger.warning(f"Invalid agencies parameter type: {type(agencies)}. Returning all tools.")
+        selected_tools = list(all_tools.values())
+    
+    logger.info(f"Created {len(selected_tools)} LlamaIndex FunctionTools for agencies: {agencies}")
+    return selected_tools
 
 
-def generate_llamaindex_agent() -> FunctionAgent:
+def generate_llamaindex_agent(agencies: Optional[Union[str, List[str]]] = None) -> FunctionAgent:
     """
     Generate a LlamaIndex FunctionAgent with tools and system prompt.
+    
+    Args:
+        agencies: Optional agency filter for tools. Can be:
+                 - None: Uses all available tools
+                 - str: Uses tool for single agency (e.g., "kfc", "kfcb", "brs", "odpc")
+                 - List[str]: Uses tools for multiple agencies
     
     Returns:
         Initialized FunctionAgent
     """
     logger.info("Starting LlamaIndex FunctionAgent creation process")
     
-    # Create tools
-    tools = create_llamaindex_tools()
+    # Create tools with optional filtering
+    tools = create_llamaindex_tools(agencies)
     
     # Format system prompt with collection information
     formatted_system_prompt = SYSTEM_PROMPT.format(
@@ -287,7 +335,7 @@ def generate_llamaindex_agent() -> FunctionAgent:
         verbose=True
     )
     
-    logger.info(f"LlamaIndex FunctionAgent created with {len(tools)} tools available")
+    logger.info(f"LlamaIndex FunctionAgent created with {len(tools)} tools available for agencies: {agencies}")
     return agent
 
 
@@ -371,7 +419,8 @@ class LlamaIndexResponseProcessor:
 async def run_llamaindex_agent(
     message: str, 
     chat_history: Optional[List[ChatMessage]] = None,
-    session_id: Optional[str] = None
+    session_id: Optional[str] = None,
+    agencies: Optional[Union[str, List[str]]] = None
 ) -> Output:
     """
     Run the LlamaIndex agent with a message and optional chat history.
@@ -380,14 +429,18 @@ async def run_llamaindex_agent(
         message: User message to process
         chat_history: Optional chat history as LlamaIndex ChatMessage objects
         session_id: Optional session ID for tracking
+        agencies: Optional agency filter for tools. Can be:
+                 - None: Uses all available tools
+                 - str: Uses tool for single agency (e.g., "kfc", "kfcb", "brs", "odpc")
+                 - List[str]: Uses tools for multiple agencies
         
     Returns:
         Output object with structured response
     """
-    logger.info(f"Running LlamaIndex agent for session {session_id}")
+    logger.info(f"Running LlamaIndex agent for session {session_id} with agencies: {agencies}")
     
-    # Create agent
-    agent = generate_llamaindex_agent()
+    # Create agent with optional agency filtering
+    agent = generate_llamaindex_agent(agencies)
     
     # Determine retriever type based on message content
     retriever_type = "general"
@@ -439,7 +492,8 @@ if __name__ == "__main__":
     async def test_llamaindex_agent():
         """Test the LlamaIndex agent implementation."""
         
-        # Test basic functionality
+        # Test basic functionality with all tools
+        print("=== Testing with all tools ===")
         response = await run_llamaindex_agent(
             "What services does the Kenya Film Commission provide?",
             session_id="test-session"
@@ -450,6 +504,36 @@ if __name__ == "__main__":
         print("Confidence:", response.confidence)
         print("Retriever Type:", response.retriever_type)
         print("Follow-up Questions:", [q.question for q in response.recommended_follow_up_questions])
+        
+        # Test with single agency filter
+        print("\n=== Testing with single agency (kfc) ===")
+        response_single = await run_llamaindex_agent(
+            "What funding is available for filmmakers?",
+            session_id="test-session-single",
+            agencies="kfc"
+        )
+        
+        print("Response:", response_single.answer)
+        
+        # Test with multiple agencies filter
+        print("\n=== Testing with multiple agencies (brs, odpc) ===")
+        response_multiple = await run_llamaindex_agent(
+            "What are the data protection requirements for businesses?",
+            session_id="test-session-multiple",
+            agencies=["brs", "odpc"]
+        )
+        
+        print("Response:", response_multiple.answer)
+        
+        # Test with invalid agency (should fallback to all tools)
+        print("\n=== Testing with invalid agency ===")
+        response_invalid = await run_llamaindex_agent(
+            "General government information",
+            session_id="test-session-invalid",
+            agencies="invalid_agency"
+        )
+        
+        print("Response:", response_invalid.answer)
         
         # Test with chat history
         chat_history = [

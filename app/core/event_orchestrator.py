@@ -257,7 +257,7 @@ def generate_agent() -> Agent[None, Output]:
         logger.info("Successfully created OpenAI agent with model 'gpt-4o'")
     else:
         groq_model_name = os.getenv('GROQ_MODEL_NAME', 'llama-3.3-70b-versatile')
-        logger.info(f"Creating Groq-based agent with model: {groq_model_name}")
+        logger.info(f"Creating Groq-based pydantic agent with model: {groq_model_name}")
         model = GroqModel(
             model_name=groq_model_name,
             provider=GroqProvider(api_key=os.getenv("GROQ_API_KEY"))

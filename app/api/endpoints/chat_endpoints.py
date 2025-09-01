@@ -13,6 +13,8 @@ from pydantic_ai.messages import ModelMessagesTypeAdapter
 from app.db.database import get_db
 from app.utils.chat_persistence import ChatPersistenceService
 from app.core.orchestrator import generate_agent, Output, Source, Usage, UsageDetails
+from app.core.llamaindex_orchestrator import run_llamaindex_agent
+from app.core.compatibility_orchestrator import convert_pydantic_ai_messages_to_llamaindex
 from app.core.event_orchestrator import generate_agent_with_events, EventTrackingContext
 from app.utils.security import validate_api_key, require_read_permission, require_write_permission, require_delete_permission, APIKeyInfo
 
@@ -197,6 +199,83 @@ async def process_chat(
             status_code=500, 
             detail=f"Error processing chat message: {str(e)}"
         )
+
+
+@router.post("/{agency}", response_model=ChatResponse)
+async def process_chat_by_agency(
+    agency: str = Path(..., description="The agency key to scope tools (e.g., kfc, kfcb, brs, odpc)"),
+    request: ChatRequest = Body(...),
+    db: AsyncSession = Depends(get_db),
+    api_key_info: APIKeyInfo = Depends(require_write_permission)
+) -> ChatResponse:
+    """
+    Process a chat message but scope the available tools to a specific agency.
+    JSON input is identical to the default chat endpoint.
+    """
+    try:
+        logger.info(f"Processing agency-scoped chat request for agency: {agency}, session: {request.session_id}")
+
+        # Create or retrieve session ID
+        session_id = request.session_id or str(uuid4())
+
+        # Handle chat persistence
+        if request.session_id:
+            existing_chat = await ChatPersistenceService.get_chat_by_session_id(db, session_id)
+            if not existing_chat:
+                await ChatPersistenceService.create_chat_session_with_id(db, session_id, request.user_id)
+        else:
+            session_id = await ChatPersistenceService.create_chat_session(db, request.user_id)
+
+        # Load chat history for context (Pydantic-AI format) and convert to LlamaIndex ChatMessage
+        history_pydantic = await ChatPersistenceService.load_history(db, session_id)
+        llama_history = convert_pydantic_ai_messages_to_llamaindex(history_pydantic) if history_pydantic else None
+
+        # Run the LlamaIndex agent directly with agency filter
+        li_response: Output = await run_llamaindex_agent(
+            message=request.message,
+            chat_history=llama_history,
+            session_id=session_id,
+            agencies=agency
+        )
+
+        # Persist user and assistant messages
+        await ChatPersistenceService.save_message(
+            db=db,
+            session_id=session_id,
+            message_type="user",
+            message_object={"content": request.message, "metadata": request.metadata or {}}
+        )
+
+        await ChatPersistenceService.save_message(
+            db=db,
+            session_id=session_id,
+            message_type="assistant",
+            message_object={
+                "content": li_response.answer,
+                "sources": [s.dict() for s in li_response.sources],
+                "confidence": li_response.confidence,
+                "retriever_type": li_response.retriever_type,
+                "recommended_follow_up_questions": [q.dict() for q in li_response.recommended_follow_up_questions],
+            },
+            # Save a minimal history compatible with our loader
+            history=to_jsonable_python([{"role": "assistant", "content": li_response.answer}])
+        )
+
+        # Build API response
+        return ChatResponse(
+            session_id=session_id,
+            answer=li_response.answer,
+            sources=li_response.sources,
+            confidence=li_response.confidence,
+            retriever_type=li_response.retriever_type,
+            usage=li_response.usage,
+            recommended_follow_up_questions=li_response.recommended_follow_up_questions,
+            trace_id=None,
+        )
+
+    except Exception as e:
+        logger.error(f"Error processing agency-scoped chat: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Error processing chat message: {str(e)}")
 
 
 @router.get("/{session_id}", response_model=ChatHistoryResponse)

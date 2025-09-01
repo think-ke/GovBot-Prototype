@@ -32,7 +32,6 @@ from app.db.models.audit_log import AuditLog, Base as AuditBase
 from app.core.crawlers.web_crawler import crawl_website
 from app.core.crawlers.utils import get_page_as_markdown
 from app.core.rag.indexer import extract_text_batch, get_collection_stats, start_background_indexing, start_background_document_indexing
-from app.core.orchestrator import generate_agent
 from app.utils.security import add_api_key_to_docs, validate_api_key, require_read_permission, require_write_permission, require_delete_permission, APIKeyInfo, log_audit_action
 
 import logfire
