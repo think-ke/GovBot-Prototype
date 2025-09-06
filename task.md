@@ -18,40 +18,40 @@
 ## Work plan (checklist)
 
 1) DB schema and migrations (via Alembic)
-- [ ] Adopt Alembic for schema management; stop relying on `create_all` in production.
-- [ ] Ensure `webpages` and `documents` tables have `is_indexed` and `indexed_at` (codify in Alembic migration; retire `scripts/add_indexing_columns.py`).
-- [ ] Add new `collections` table via Alembic migration.
-- [ ] Add CI step to verify the DB is at Alembic head and migrations apply cleanly.
+- [x] Adopt Alembic for schema management; stop relying on `create_all` in production. (Configured env.py to aggregate all Base metadatas; uses sync driver.)
+- [x] Ensure `webpages` and `documents` tables have `is_indexed` and `indexed_at` (captured in migrations; script deprecated).
+- [x] Add new `collections` table via Alembic migration. (Applied.)
+- [ ] Add CI step to verify the DB is at Alembic head and migrations apply cleanly. (Deferred)
 
 2) Persist Collections in DB and wire API
-- [ ] Define `Collection` SQLAlchemy model with id (uuid str), name, description, type, created_at, updated_at, and optional owner/api_key_name.
-- [ ] Add migrations or table-creation to `app/db/database` startup (consistent with other Base models).
-- [ ] Replace `collections_storage` usage in `fast_api_app.py` with DB CRUD (create/list/update/delete/get).
-- [ ] Update collection list endpoints to compute counts via DB queries (documents + webpages) as already partially done.
-- [ ] Backfill: script to import existing static `collection_dict` (kfc, kfcb, brs, odpc) into DB once.
+- [x] Define `Collection` SQLAlchemy model with id (uuid str), name, description, type, created_at, updated_at, and optional owner/api_key_name.
+- [x] Add migrations to create collections table; startup gated create_all for dev only.
+- [x] Replace `collections_storage` usage in `fast_api_app.py` with DB CRUD (create/list/update/delete/get).
+- [x] Update collection list endpoints to compute counts via DB queries (documents + webpages).
+- [x] Backfill: script to import existing static `collection_dict` (kfc, kfcb, brs, odpc) into DB once. (`scripts/seed_collections.py`)
 
 3) Stop using static `collection_dict` in RAG
-- [ ] Create small repository/util to fetch collections from DB (id, name, description, type).
-- [ ] Modify `tool_loader.get_index_dict()` to lazily initialize indexes for DB collections (iterate DB collections; `name` or `id` determines Chroma collection key; recommend using `collection_id`).
-- [ ] Update `llamaindex_orchestrator.build_system_prompt` to format `{collections}` using DB collections (fallback if none).
-- [ ] Consider generic retrieval tool that accepts `collection_id` to avoid hardcoding per-agency tools (phaseable; initial step may keep legacy tools while adding generic tool).
+- [x] Load collections from DB into `tool_loader` and cache; alias map for legacy keys.
+- [x] Modify `tool_loader.get_index_dict()` to lazily initialize Chroma indexes per canonical collection_id; alias keys point to same index.
+- [x] Update LlamaIndex orchestrator to build tools dynamically from DB collections; preserve legacy aliases; automatic cache refresh on collection create/update/delete.
+- [x] Accept canonical UUIDs as agency tokens in `/chat/{agency}`.
+- [ ] Optional: add a single generic retrieval tool name for all collections. (Deferred)
 
 4) Document CRUD and Chroma deletion
-- [ ] Add PUT/PATCH `/documents/{id}` to update metadata and (optionally) replace the file. If file replaced: re-upload to MinIO, mark `is_indexed=False`, and trigger background re-indexing for the document's collection.
-- [ ] Implement Chroma deletion on DELETE `/documents/{id}`:
-  - [ ] Utility: `delete_embeddings_for_doc(collection_id, doc_id)` that connects to Chroma and deletes vectors by metadata filter `{ "doc_id": <id> }`.
-  - [ ] Call the utility before/after removing MinIO object and DB row; ensure idempotency.
-  - [ ] Ensure indexer sets metadata `doc_id` (already done in `indexer.index_uploaded_documents_by_collection`).
+- [ ] Add PUT/PATCH `/documents/{id}` to update metadata and (optionally) replace the file. If file replaced: re-upload to MinIO, mark `is_indexed=False`, and trigger background re-indexing for the document's collection. (Pending)
+- [x] Implement Chroma deletion on DELETE `/documents/{id}`:
+  - [x] Utility: `delete_embeddings_for_doc(collection_id, doc_id)` added in `vectorstore_admin.py`.
+  - [x] Called prior to MinIO + DB deletion; idempotent.
+  - [x] Indexer uses `doc_id` metadata.
 
 5) Webpage deletion and Chroma deletion
-- [ ] Add DELETE `/webpages/{id}` to remove webpage row.
-- [ ] In the same operation, call Chroma deletion utility with metadata filter `{ "doc_id": <webpage_id> }` (indexer already writes this for crawled pages).
-- [ ] Optional: Add POST `/webpages/{id}/recrawl` to update a single page; mark `is_indexed=False` to force re-index after recrawl.
+- [ ] Add DELETE `/webpages/{id}` to remove webpage row and its vectors. (In progress)
+- [ ] Optional: Add POST `/webpages/{id}/recrawl` to update a single page; mark `is_indexed=False`.
 
 6) Indexing progress endpoints
-- [ ] Uploaded docs: Add GET `/documents/indexing-status?collection_id=...` returning `{ indexed, unindexed, progress_percent }` computed from `Document.is_indexed`.
-- [ ] Webpages: Validate/fix progress calculation in `/collection-stats/{collection_id}` (use `* 100` instead of `* 20`).
-- [ ] Add a unified GET `/collections/{id}/indexing-status` merging docs + webpages progress (with separate and combined counts).
+- [ ] Uploaded docs: Add GET `/documents/indexing-status?collection_id=...` returning `{ indexed, unindexed, progress_percent }`. (In progress)
+- [ ] Webpages: Fix progress calculation in `/collection-stats/{collection_id}` (use `* 100`). (In progress)
+- [ ] Add unified GET `/collection-stats/{id}/indexing-status` merging docs + webpages. (Planned)
 
 7) Indexing job status tracking (optional but recommended)
 - [ ] Introduce in-memory (or DB-backed) tracker for indexing tasks, like `crawl_tasks`.
@@ -59,21 +59,21 @@
 - [ ] Add GET `/indexing/{task_id}` for status; GET `/indexing` to list.
 
 8) Assistant/collection metrics
-- [ ] Integrate `analytics` routers into main FastAPI app under `/analytics` (behind read permission).
-- [ ] Add optional filters to analytics endpoints to scope by `collection_id` or `assistant` (e.g., agency) if tracked in chat metadata.
-- [ ] Enhance chat persistence to record `retriever_type` or `agencies` into message/session metadata so analytics can filter by assistant.
+- [ ] Integrate `analytics` routers into main FastAPI app under `/analytics` (behind read permission). (Pending)
+- [ ] Add optional filters to analytics endpoints to scope by `collection_id` or `assistant`. (Pending)
+- [ ] Enhance chat persistence to record `retriever_type` or `agencies` in metadata. (Pending)
 
 9) Orchestrator/tooling alignment
-- [ ] Decide on Chroma collection naming: use `collection_id` consistently.
-- [ ] Ensure ingestion pipeline sets a stable `metadata` for deletion: `{ doc_id, source_type, collection_id, url/filename }`.
-- [ ] Add a small `vectorstore_admin.py` utility for testing deletes (by doc_id and/or collection_id).
+- [x] Use `collection_id` as Chroma collection name; alias pointers map to canonical.
+- [x] Ensure ingestion metadata includes `doc_id` and `collection_id` (present); leveraged for delete.
+- [x] Added `vectorstore_admin.py` for admin deletes.
 
 10) Tests
-- [ ] Unit test: delete-document removes rows from Chroma (mock Chroma or use test instance).
+- [ ] Unit test: delete-document removes rows from Chroma.
 - [ ] Unit test: delete-webpage removes vectors.
-- [ ] API tests: document PUT/PATCH path; indexing-status endpoints.
-- [ ] Orchestrator: system prompt contains DB collections.
-- [ ] Tool loader: initializes indexes for DB collections (smoke test with a temp collection).
+- [ ] API tests: document PUT/PATCH; indexing-status endpoints.
+- [ ] Orchestrator: system prompt reflects DB collections.
+- [ ] Tool loader: initializes indexes for DB collections.
 
 ## API changes (proposed)
 - Documents

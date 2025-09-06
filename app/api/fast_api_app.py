@@ -1012,6 +1012,119 @@ async def extract_texts_from_collection(
         logger.error(f"Error extracting texts: {e}")
         raise HTTPException(status_code=500, detail=f"Error extracting texts: {str(e)}")
 
+@webpage_router.delete("/{webpage_id}")
+async def delete_webpage(
+    webpage_id: int,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    api_key_info: APIKeyInfo = Depends(require_delete_permission)
+):
+    """
+    Delete a crawled webpage and its embeddings from Chroma.
+    Requires delete permission.
+
+    Args:
+        webpage_id: ID of the webpage to delete
+    Returns:
+        Confirmation message
+    """
+    try:
+        page = await db.get(Webpage, webpage_id)
+        if not page:
+            raise HTTPException(status_code=404, detail="Webpage not found")
+
+        info = {"url": page.url, "collection_id": page.collection_id}
+
+        # Delete vectors using doc_id = webpage_id
+        try:
+            coll_id = str(page.collection_id) if page.collection_id is not None else None
+            if coll_id:
+                from app.core.rag.vectorstore_admin import delete_embeddings_for_doc
+                delete_embeddings_for_doc(collection_id=coll_id, doc_id=str(webpage_id))
+        except Exception as ve:
+            logger.warning(f"Failed to delete vectors for webpage {webpage_id}: {ve}")
+
+        # Delete DB row
+        await db.delete(page)
+        await db.commit()
+
+        # Audit log
+        await log_audit_action(
+            user_id=api_key_info.get_user_id(),
+            action="delete",
+            resource_type="webpage",
+            resource_id=str(webpage_id),
+            details=info,
+            request=request,
+            api_key_name=api_key_info.name,
+        )
+
+        return {"message": f"Webpage {webpage_id} deleted successfully"}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error deleting webpage: {e}")
+        raise HTTPException(status_code=500, detail=f"Error deleting webpage: {str(e)}")
+
+# Indexing progress endpoints
+@document_router.get("/indexing-status", response_model=Dict[str, Any])
+async def get_documents_indexing_status(
+    collection_id: str = Query(..., description="Collection ID"),
+    db: AsyncSession = Depends(get_db),
+    api_key_info: APIKeyInfo = Depends(require_read_permission)
+):
+    """Return indexing status for uploaded documents in a collection."""
+    try:
+        from sqlalchemy import select, func
+        total = (await db.execute(select(func.count(Document.id)).where(Document.collection_id == collection_id))).scalar() or 0
+        indexed = (await db.execute(select(func.count(Document.id)).where((Document.collection_id == collection_id) & (Document.is_indexed == True)))).scalar() or 0
+        unindexed = max(total - indexed, 0)
+        progress = (indexed / total * 100.0) if total > 0 else 0.0
+        return {
+            "collection_id": collection_id,
+            "documents_total": total,
+            "indexed": indexed,
+            "unindexed": unindexed,
+            "progress_percent": round(progress, 1),
+        }
+    except Exception as e:
+        logger.error(f"Error getting documents indexing status: {e}")
+        raise HTTPException(status_code=500, detail=f"Error getting documents indexing status: {str(e)}")
+
+
+@collection_router.get("/{collection_id}/indexing-status", response_model=Dict[str, Any])
+async def get_collection_indexing_status(
+    collection_id: str,
+    db: AsyncSession = Depends(get_db),
+    api_key_info: APIKeyInfo = Depends(require_read_permission)
+):
+    """Return combined indexing status for documents and webpages in a collection."""
+    try:
+        from sqlalchemy import select, func
+        # Documents
+        doc_total = (await db.execute(select(func.count(Document.id)).where(Document.collection_id == collection_id))).scalar() or 0
+        doc_indexed = (await db.execute(select(func.count(Document.id)).where((Document.collection_id == collection_id) & (Document.is_indexed == True)))).scalar() or 0
+        doc_unindexed = max(doc_total - doc_indexed, 0)
+        # Webpages
+        web_total = (await db.execute(select(func.count(Webpage.id)).where(Webpage.collection_id == collection_id))).scalar() or 0
+        web_indexed = (await db.execute(select(func.count(Webpage.id)).where((Webpage.collection_id == collection_id) & (Webpage.is_indexed == True)))).scalar() or 0
+        web_unindexed = max(web_total - web_indexed, 0)
+
+        total = doc_total + web_total
+        indexed = doc_indexed + web_indexed
+        progress = (indexed / total * 100.0) if total > 0 else 0.0
+
+        return {
+            "collection_id": collection_id,
+            "documents": {"total": doc_total, "indexed": doc_indexed, "unindexed": doc_unindexed},
+            "webpages": {"total": web_total, "indexed": web_indexed, "unindexed": web_unindexed},
+            "combined": {"total": total, "indexed": indexed, "unindexed": total - indexed, "progress_percent": round(progress, 1)},
+        }
+    except Exception as e:
+        logger.error(f"Error getting collection indexing status: {e}")
+        raise HTTPException(status_code=500, detail=f"Error getting collection indexing status: {str(e)}")
+
 # Collection Management Endpoints
 @collection_router.post("/", response_model=CollectionResponse)
 async def create_collection(
