@@ -13,9 +13,9 @@ from app.core.llamaindex_orchestrator import (
     Source, 
     Usage, 
     UsageDetails, 
-    FollowUpQuestion
+    FollowUpQuestion,
+    run_llamaindex_agent,
 )
-from app.core.orchestrator import run_agent as run_llamaindex_agent
 
 logger = logging.getLogger(__name__)
 

@@ -28,6 +28,7 @@ from app.db.models.webpage import Webpage, WebpageLink, Base as WebpageBase
 from app.db.models.chat import Chat, ChatMessage, Base as ChatBase
 from app.db.models.chat_event import ChatEvent, Base as ChatEventBase
 from app.db.models.message_rating import MessageRating, Base as MessageRatingBase
+from app.db.models.collection import Collection
 from app.db.models.audit_log import AuditLog, Base as AuditBase
 from app.core.crawlers.web_crawler import crawl_website
 from app.core.crawlers.utils import get_page_as_markdown
@@ -66,12 +67,14 @@ async def lifespan(app: FastAPI):
     # Startup logic
     logger.info("Starting up GovStack API")
     async with engine.begin() as conn:
-        # Create tables if they don't exist
-        await conn.run_sync(DocumentBase.metadata.create_all)
-        await conn.run_sync(WebpageBase.metadata.create_all)
-        await conn.run_sync(ChatBase.metadata.create_all)
-        await conn.run_sync(ChatEventBase.metadata.create_all)
-        await conn.run_sync(AuditBase.metadata.create_all)
+        # In production, rely on Alembic migrations instead of create_all.
+        # Enable this only for local dev bootstrapping by setting DB_AUTO_CREATE=true
+        if os.getenv("DB_AUTO_CREATE", "false").lower() == "true":
+            await conn.run_sync(DocumentBase.metadata.create_all)
+            await conn.run_sync(WebpageBase.metadata.create_all)
+            await conn.run_sync(ChatBase.metadata.create_all)
+            await conn.run_sync(ChatEventBase.metadata.create_all)
+            await conn.run_sync(AuditBase.metadata.create_all)
     yield
     # Shutdown logic
     logger.info("Shutting down GovStack API")
@@ -540,17 +543,7 @@ class CollectionTextRequest(BaseModel):
     hours_ago: Optional[int] = 24
     output_format: str = Field(default="text", pattern="^(text|json|markdown)$")
 
-# Simple in-memory collection storage (should be replaced with database model)
-collections_storage = {
-    "default": {
-        "id": "default",
-        "name": "Default Collection",
-        "description": "Default collection for uncategorized content",
-        "type": "mixed",
-        "created_at": datetime.now(timezone.utc).isoformat(),
-        "updated_at": datetime.now(timezone.utc).isoformat()
-    }
-}
+# Collections are now persisted in the database via the Collection model
 
 # In-memory storage for background task status
 crawl_tasks = {}
@@ -1016,7 +1009,8 @@ async def extract_texts_from_collection(
 async def create_collection(
     request_data: CreateCollectionRequest,
     request: Request,
-    api_key_info: APIKeyInfo = Depends(require_write_permission)
+    api_key_info: APIKeyInfo = Depends(require_write_permission),
+    db: AsyncSession = Depends(get_db)
 ):
     """
     Create a new collection.
@@ -1032,18 +1026,17 @@ async def create_collection(
     try:
         import uuid
         collection_id = str(uuid.uuid4())
-        current_time = datetime.now(timezone.utc).isoformat()
-        
-        collection_data = {
-            "id": collection_id,
-            "name": request_data.name,
-            "description": request_data.description,
-            "type": request_data.type,
-            "created_at": current_time,
-            "updated_at": current_time
-        }
-        
-        collections_storage[collection_id] = collection_data
+        # Create DB row
+        db_obj = Collection(
+            id=collection_id,
+            name=request_data.name,
+            description=request_data.description,
+            collection_type=request_data.type,
+            api_key_name=api_key_info.name,
+        )
+        db.add(db_obj)
+        await db.commit()
+        await db.refresh(db_obj)
         
         # Log audit action
         await log_audit_action(
@@ -1060,14 +1053,17 @@ async def create_collection(
             api_key_name=api_key_info.name
         )
         
-        # Add counts (would come from database queries in real implementation)
-        response_data = collection_data.copy()
-        response_data.update({
-            "document_count": 0,
-            "webpage_count": 0
-        })
-        
-        return response_data
+        # Build response
+        return CollectionResponse(
+            id=db_obj.id,
+            name=db_obj.name,
+            description=db_obj.description,
+            type=db_obj.collection_type,
+            created_at=db_obj.created_at.isoformat() if db_obj.created_at else datetime.now(timezone.utc).isoformat(),
+            updated_at=db_obj.updated_at.isoformat() if db_obj.updated_at else datetime.now(timezone.utc).isoformat(),
+            document_count=0,
+            webpage_count=0,
+        )
     
     except Exception as e:
         logger.error(f"Error creating collection: {str(e)}")
@@ -1087,27 +1083,36 @@ async def list_collections(
     """
     try:
         from sqlalchemy import select, func
-        
-        collections = []
-        for collection_id, collection_data in collections_storage.items():
-            # Get document count for this collection
-            doc_query = select(func.count(Document.id)).where(Document.collection_id == collection_id)
-            doc_result = await db.execute(doc_query)
-            doc_count = doc_result.scalar() or 0
-            
-            # Get webpage count for this collection  
-            webpage_query = select(func.count(Webpage.id)).where(Webpage.collection_id == collection_id)
-            webpage_result = await db.execute(webpage_query)
-            webpage_count = webpage_result.scalar() or 0
-            
-            response_data = collection_data.copy()
-            response_data.update({
-                "document_count": doc_count,
-                "webpage_count": webpage_count
-            })
-            collections.append(response_data)
-        
-        return collections
+        # Fetch all collections
+        coll_result = await db.execute(select(Collection))
+        rows = coll_result.scalars().all()
+
+        # Precompute counts per collection_id
+        doc_counts = {}
+        web_counts = {}
+        doc_rows = (await db.execute(select(Document.collection_id, func.count(Document.id)).group_by(Document.collection_id))).all()
+        for cid, cnt in doc_rows:
+            if cid:
+                doc_counts[str(cid)] = cnt or 0
+        web_rows = (await db.execute(select(Webpage.collection_id, func.count(Webpage.id)).group_by(Webpage.collection_id))).all()
+        for cid, cnt in web_rows:
+            if cid:
+                web_counts[str(cid)] = cnt or 0
+
+        # Build responses
+        resp: List[CollectionResponse] = []
+        for c in rows:
+            resp.append(CollectionResponse(
+                id=c.id,
+                name=c.name,
+                description=c.description,
+                type=c.collection_type,
+                created_at=c.created_at.isoformat() if c.created_at else datetime.now(timezone.utc).isoformat(),
+                updated_at=c.updated_at.isoformat() if c.updated_at else datetime.now(timezone.utc).isoformat(),
+                document_count=doc_counts.get(c.id, 0),
+                webpage_count=web_counts.get(c.id, 0),
+            ))
+        return resp
     
     except Exception as e:
         logger.error(f"Error listing collections: {str(e)}")
@@ -1134,26 +1139,25 @@ async def update_collection(
         Updated collection data
     """
     try:
-        if collection_id not in collections_storage:
+        # Load from DB
+        db_obj = await db.get(Collection, collection_id)
+        if not db_obj:
             raise HTTPException(status_code=404, detail="Collection not found")
-        
-        collection_data = collections_storage[collection_id].copy()
-        original_data = collection_data.copy()
-        
-        # Update fields that were provided
+
+        # Track changes for audit
         changes = {}
-        if request_data.name is not None:
-            changes["name"] = {"old": collection_data.get("name"), "new": request_data.name}
-            collection_data["name"] = request_data.name
-        if request_data.description is not None:
-            changes["description"] = {"old": collection_data.get("description"), "new": request_data.description}
-            collection_data["description"] = request_data.description
-        if request_data.type is not None:
-            changes["type"] = {"old": collection_data.get("type"), "new": request_data.type}
-            collection_data["type"] = request_data.type
-        
-        collection_data["updated_at"] = datetime.now(timezone.utc).isoformat()
-        collections_storage[collection_id] = collection_data
+        if request_data.name is not None and request_data.name != db_obj.name:
+            changes["name"] = {"old": db_obj.name, "new": request_data.name}
+            db_obj.name = request_data.name
+        if request_data.description is not None and request_data.description != db_obj.description:
+            changes["description"] = {"old": db_obj.description, "new": request_data.description}
+            db_obj.description = request_data.description
+        if request_data.type is not None and request_data.type != db_obj.collection_type:
+            changes["type"] = {"old": db_obj.collection_type, "new": request_data.type}
+            db_obj.collection_type = request_data.type
+
+        await db.commit()
+        await db.refresh(db_obj)
         
         # Log audit action
         await log_audit_action(
@@ -1168,21 +1172,19 @@ async def update_collection(
         
         # Add counts
         from sqlalchemy import select, func
-        doc_query = select(func.count(Document.id)).where(Document.collection_id == collection_id)
-        doc_result = await db.execute(doc_query)
-        doc_count = doc_result.scalar() or 0
-        
-        webpage_query = select(func.count(Webpage.id)).where(Webpage.collection_id == collection_id)
-        webpage_result = await db.execute(webpage_query)
-        webpage_count = webpage_result.scalar() or 0
-        
-        response_data = collection_data.copy()
-        response_data.update({
-            "document_count": doc_count,
-            "webpage_count": webpage_count
-        })
-        
-        return response_data
+        doc_count = (await db.execute(select(func.count(Document.id)).where(Document.collection_id == collection_id))).scalar() or 0
+        webpage_count = (await db.execute(select(func.count(Webpage.id)).where(Webpage.collection_id == collection_id))).scalar() or 0
+
+        return CollectionResponse(
+            id=db_obj.id,
+            name=db_obj.name,
+            description=db_obj.description,
+            type=db_obj.collection_type,
+            created_at=db_obj.created_at.isoformat() if db_obj.created_at else datetime.now(timezone.utc).isoformat(),
+            updated_at=db_obj.updated_at.isoformat() if db_obj.updated_at else datetime.now(timezone.utc).isoformat(),
+            document_count=doc_count,
+            webpage_count=webpage_count,
+        )
     
     except HTTPException:
         raise
@@ -1194,7 +1196,8 @@ async def update_collection(
 async def delete_collection(
     collection_id: str,
     request: Request,
-    api_key_info: APIKeyInfo = Depends(require_delete_permission)
+    api_key_info: APIKeyInfo = Depends(require_delete_permission),
+    db: AsyncSession = Depends(get_db)
 ):
     """
     Delete a collection.
@@ -1208,16 +1211,18 @@ async def delete_collection(
         Confirmation message
     """
     try:
-        if collection_id not in collections_storage:
+        db_obj = await db.get(Collection, collection_id)
+        if not db_obj:
             raise HTTPException(status_code=404, detail="Collection not found")
-        
+
         if collection_id == "default":
             raise HTTPException(status_code=400, detail="Cannot delete default collection")
-        
-        # Store collection info for audit log
-        collection_info = collections_storage[collection_id].copy()
-        
-        del collections_storage[collection_id]
+
+        collection_info = db_obj.to_dict()
+
+        # Delete DB row
+        await db.delete(db_obj)
+        await db.commit()
         
         # Log audit action
         await log_audit_action(

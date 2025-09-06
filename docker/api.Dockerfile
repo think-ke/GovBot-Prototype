@@ -21,8 +21,11 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Install gunicorn and uvloop
 RUN pip install --no-cache-dir gunicorn uvloop uvicorn[standard] watchfiles
 
-# Copy the application code
+# Copy the application code and scripts into the container
 COPY ./app /app/app
+
+# Copy any additional scripts or files
+COPY ./scripts /app/scripts
 
 # Make port 5000 available to the world outside this container
 EXPOSE 5000
