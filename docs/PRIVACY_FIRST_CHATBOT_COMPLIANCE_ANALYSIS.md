@@ -18,7 +18,7 @@ This document provides a comprehensive analysis of the GovStack project's adhere
 - ✅ Security-focused architecture with API key authentication
 - ✅ Event payloads now sanitized server-side to prevent PII leakage (defense-in-depth)
 - ⚠️ Explicit privacy disclaimers added in system prompt and reply footer; UI banner still pending
-- ❌ No formal data retention policies implemented
+- ⚠️ Retention tooling added for chats (90-day purge script); policy + scheduling still pending
 - ❌ Limited anonymization of analytics data (user_id still direct in analytics)
 - ⚠️ Audit trail exists but lacks privacy-specific logging
 
@@ -128,7 +128,7 @@ feedback_text = redact_pii(request.feedback_text) if request.feedback_text else 
 - **Partial**: Session tracking implemented for analytics
 - **Improved**: Event payloads sanitized to avoid PII leakage in logs/analytics
 - **Improved**: Chat persistence defensively redacts `content` and `query` fields
-- **Gap**: No automatic data retention/cleanup policies
+- **Improved**: Retention cleanup tooling available; scheduling/policy pending
 - **Gap**: User IDs not anonymized in analytics
 
 **Evidence from Codebase**:
@@ -192,7 +192,7 @@ user_message=redact_pii(user_message)
 
 ## 5. Data Retention & Anonymization ❌
 
-### Current Status: **NON-COMPLIANT**
+### Current Status: **NON-COMPLIANT (tooling added, policy pending)**
 
 **Requirements**:
 - ❌ Set clear data retention periods
@@ -200,26 +200,36 @@ user_message=redact_pii(user_message)
 - ❌ Anonymize stored data
 
 **Current Implementation**:
-- **Gap**: No automated data retention policies found
-- **Gap**: Chat data persists indefinitely
+- **Tooling**: Chat retention cleanup implemented (default 90 days), exposes API and CLI
+- **Partial**: Event cleanup exists (for chat events)
+- **Gap**: No formal retention policy or scheduled job configured in production
 - **Gap**: Analytics data includes direct user identifiers
-- **Partial**: Event cleanup exists (for chat events) but is not comprehensive
 
 **Evidence from Codebase**:
 ```python
-# scripts/event_cleanup.py exists but limited scope
+# scripts/event_cleanup.py — event cleanup (exists)
 python scripts/event_cleanup.py cleanup --hours 48
 
-# But no comprehensive data retention for Chat/ChatMessage tables
-# Analytics documentation shows data privacy concerns:
-# "User IDs should be anonymized or hashed" - but not implemented
+# scripts/chat_retention.py — NEW: chat/message retention CLI
+# Purge chats older than N days (default 90), with dry-run and stats
+./scripts/chat_retention.py cleanup --days 90 --dry-run
+./scripts/chat_retention.py cleanup --days 90
+./scripts/chat_retention.py stats
+
+# app/utils/chat_persistence.py — NEW: server-side cleanup API
+async def cleanup_old_chats(db, retention_days: int = 90) -> Dict[str, int]:
+    # Deletes ChatMessage for chats older than cutoff, then deletes Chats
+    ...
+
+# Analytics privacy note:
+# "User IDs should be anonymized or hashed" — not implemented yet
 ```
 
 **Recommendations**:
-1. **URGENT**: Implement automated data retention policies
-2. **URGENT**: Create cleanup scripts for Chat/ChatMessage tables
+1. **URGENT**: Adopt a formal retention policy (e.g., 90 days for chats/messages)
+2. **URGENT**: Schedule daily retention job using the provided CLI or a containerized task
 3. **URGENT**: Anonymize user_ids in analytics storage
-4. Set default retention periods (30-90 days for logs)
+4. Apply retention to other data classes where applicable (events already have cleanup)
 
 ---
 
@@ -300,7 +310,7 @@ query_odpc_collection(query: str) -> str:
 | **Privacy Disclaimer** | Include notice about no PII collection | ✅ | Implemented in system prompt and reply footer; add UI banner |
 | **Input Filtering** | Warn users about PII and use filters | ✅ | Excellent PII detection system |
 | **Metadata Awareness** | Minimize and anonymize logged metadata | ⚠️ | User IDs not anonymized; event payloads sanitized |
-| **Logging & Retention** | Set clear retention and cleanup policies | ❌ | No automated retention policies |
+| **Logging & Retention** | Set clear retention and cleanup policies | ⚠️ | Chat retention tool available; scheduling/policy pending |
 | **Access Controls** | Restrict access to logs and admin functions | ✅ | Strong RBAC implementation |
 | **Secure Communication** | Use HTTPS encryption | ✅ | HTTPS enforcement documented |
 | **Third-Party Tools** | Vet external tools for data collection | ✅ | Self-hosted architecture |
@@ -322,7 +332,7 @@ query_odpc_collection(query: str) -> str:
 | Risk | Likelihood | Impact | Current Mitigation | Required Action |
 |------|------------|--------|-------------------|-----------------|
 | User enters PII voluntarily | Medium | Medium | PII detection/redaction system; event sanitization | ✅ Add UI warnings |
-| Indefinite data retention | High | High | ❌ None currently | ❌ Implement retention policies |
+| Indefinite data retention | High | High | ⚠️ Tooling available; scheduling/policy pending | ❌ Implement retention policies |
 | Analytics reveal user patterns | Medium | Medium | ⚠️ Some anonymization | ❌ Full anonymization needed |
 | Admin access to sensitive logs | Low | High | ✅ RBAC implemented | ✅ Continue monitoring |
 | Third-party data exposure | Low | Low | ✅ Self-hosted architecture | ✅ Maintain current approach |
@@ -341,6 +351,7 @@ query_odpc_collection(query: str) -> str:
     - Implement user ID anonymization in analytics
     - Create data retention policies
     - Note: Event payload sanitization is DONE; maintain and monitor
+    - Schedule daily chat retention cleanup (cron or containerized job)
 
 2. **SHORT-TERM (Month 1)**:
    - Deploy automated data cleanup scripts
@@ -380,6 +391,12 @@ query_odpc_collection(query: str) -> str:
 4. **Event Payload Sanitization (DONE)**
     - Server-side sanitization of `event_data` and `user_message` using `redact_pii`
     - Knowledge gap events now use redacted user queries
+
+5. **Chat Retention Cleanup (TOOLING DONE; SCHEDULING PENDING)**
+        - Use the CLI to purge chats older than 90 days by default
+            - `./scripts/chat_retention.py cleanup --days 90` (or `--dry-run`)
+            - `./scripts/chat_retention.py stats` for overview
+        - Configure as a scheduled job in production (cron/K8s CronJob)
 
 ### Phase 2: Policy & Documentation (Weeks 3-4)
 1. Complete formal DPIA documentation

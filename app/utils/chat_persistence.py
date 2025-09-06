@@ -2,7 +2,7 @@
 Chat persistence service for storing and retrieving chat history.
 """
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from typing import Dict, List, Optional, Any, Union
 from sqlalchemy import select, update, and_, delete
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -153,7 +153,7 @@ class ChatPersistenceService:
             db.add(message)
             
             # Update the chat's updated_at timestamp
-            chat.updated_at = datetime.now(timezone.utc)
+            setattr(chat, "updated_at", datetime.now(timezone.utc))
             
             await db.commit()
             logger.info(f"Saved {message_type} message for chat session {session_id}")
@@ -192,7 +192,7 @@ class ChatPersistenceService:
             result = await db.execute(query)
             message = result.scalars().first()
             
-            if message and message.history:
+            if message is not None and message.history is not None:
                 logger.info(f"Found message history for session {session_id}")
                 # Convert history back to ModelMessage format using ModelMessagesTypeAdapter
                 return ModelMessagesTypeAdapter.validate_python(message.history)
@@ -319,7 +319,7 @@ class ChatPersistenceService:
                 db.add(chat_message)
             
             # Update the chat's updated_at timestamp
-            chat.updated_at = datetime.now(timezone.utc)
+            setattr(chat, "updated_at", datetime.now(timezone.utc))
             
             await db.commit()
             logger.info(f"Saved {len(messages_as_python)} messages for chat session {session_id}")
@@ -520,3 +520,44 @@ class ChatPersistenceService:
             logger.error(f"Error deleting chat session: {e}")
             await db.rollback()
             return False
+
+    @staticmethod
+    async def cleanup_old_chats(db: AsyncSession, retention_days: int = 90) -> Dict[str, int]:
+        """
+        Delete chats and their messages older than the given retention period.
+
+        Args:
+            db: Database session
+            retention_days: Age threshold in days (default 90)
+
+        Returns:
+            Dict with counts of deleted records: {"messages_deleted": int, "chats_deleted": int}
+        """
+        try:
+            cutoff = datetime.now(timezone.utc) - timedelta(days=retention_days)
+
+            # Subquery to select old chat ids
+            old_chats_subq = select(Chat.id).where(Chat.updated_at < cutoff)
+
+            # Delete messages belonging to old chats first (no DB-level ON DELETE CASCADE configured)
+            messages_result = await db.execute(
+                delete(ChatMessage).where(ChatMessage.chat_id.in_(old_chats_subq))
+            )
+
+            # Delete old chats
+            chats_result = await db.execute(
+                delete(Chat).where(Chat.updated_at < cutoff)
+            )
+
+            await db.commit()
+
+            messages_deleted = messages_result.rowcount or 0
+            chats_deleted = chats_result.rowcount or 0
+            logger.info(
+                f"Retention cleanup completed: deleted {messages_deleted} messages and {chats_deleted} chats older than {retention_days} days"
+            )
+            return {"messages_deleted": messages_deleted, "chats_deleted": chats_deleted}
+        except Exception as e:
+            logger.error(f"Error during retention cleanup: {e}")
+            await db.rollback()
+            return {"messages_deleted": 0, "chats_deleted": 0}
