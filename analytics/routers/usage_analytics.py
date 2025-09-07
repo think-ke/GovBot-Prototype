@@ -13,7 +13,12 @@ from ..services import AnalyticsService
 
 router = APIRouter()
 
-@router.get("/traffic", response_model=TrafficMetrics)
+@router.get(
+    "/traffic",
+    response_model=TrafficMetrics,
+    summary="Traffic and volume",
+    description="Totals for sessions/messages, unique users, peak hours, and growth trend over the period.",
+)
 async def get_traffic_metrics(
     start_date: Optional[datetime] = Query(None, description="Start date for analysis"),
     end_date: Optional[datetime] = Query(None, description="End date for analysis"),
@@ -30,7 +35,12 @@ async def get_traffic_metrics(
     """
     return await AnalyticsService.get_traffic_metrics(db, start_date, end_date)
 
-@router.get("/session-duration", response_model=SessionDuration)
+@router.get(
+    "/session-duration",
+    response_model=SessionDuration,
+    summary="Session duration analysis",
+    description="Average/median session durations and distribution buckets (minutes).",
+)
 async def get_session_duration_analysis(
     start_date: Optional[datetime] = Query(None, description="Start date for analysis"),
     end_date: Optional[datetime] = Query(None, description="End date for analysis"),
@@ -46,7 +56,12 @@ async def get_session_duration_analysis(
     """
     return await AnalyticsService.get_session_duration_analysis(db, start_date, end_date)
 
-@router.get("/system-health", response_model=SystemHealth)
+@router.get(
+    "/system-health",
+    response_model=SystemHealth,
+    summary="System health (demo)",
+    description="API response times, error rate, and uptime. Demo values in dev.",
+)
 async def get_system_health(
     db: AsyncSession = Depends(get_db)
 ):
@@ -68,7 +83,12 @@ async def get_system_health(
         system_availability="healthy"
     )
 
-@router.get("/peak-hours", response_model=PeakHoursResponse)
+@router.get(
+    "/peak-hours",
+    response_model=PeakHoursResponse,
+    summary="Peak hours",
+    description="Ranked busy hours across the period; timezone is UTC.",
+)
 async def get_peak_hours_analysis(
     days: int = Query(7, description="Number of days to analyze"),
     db: AsyncSession = Depends(get_db)
@@ -92,7 +112,12 @@ async def get_peak_hours_analysis(
         timezone="UTC"
     )
 
-@router.get("/capacity", response_model=CapacityMetrics, summary="System capacity & scaling", description="Current load, utilization and scaling recommendations.")
+@router.get(
+    "/capacity",
+    response_model=CapacityMetrics,
+    summary="System capacity & scaling",
+    description="Current load, utilization and scaling recommendations.",
+)
 async def get_capacity_metrics(
     db: AsyncSession = Depends(get_db)
 ):
@@ -112,7 +137,12 @@ async def get_capacity_metrics(
         recommendations=[],
     )
 
-@router.get("/hourly-traffic", response_model=List[HourlyTrafficPoint])
+@router.get(
+    "/hourly-traffic",
+    response_model=List[HourlyTrafficPoint],
+    summary="Hourly traffic (demo)",
+    description="24 UTC buckets with sessions and messages; demo shape in dev.",
+)
 async def get_hourly_traffic(
     days: int = Query(7, description="Number of days to analyze"),
     db: AsyncSession = Depends(get_db)
@@ -128,7 +158,12 @@ async def get_hourly_traffic(
     ]
     return series
 
-@router.get("/response-times", response_model=List[ResponseTimesPoint])
+@router.get(
+    "/response-times",
+    response_model=List[ResponseTimesPoint],
+    summary="Response time trends (demo)",
+    description="Daily P50/P95/P99 response time points; demo series in dev.",
+)
 async def get_response_time_trends(
     days: int = Query(7, description="Number of days to analyze"),
     db: AsyncSession = Depends(get_db)
@@ -146,7 +181,12 @@ async def get_response_time_trends(
         points.append(ResponseTimesPoint(day=str(d), p50=base[0]-jitter, p95=base[1]-jitter*2, p99=base[2]-jitter*3))
     return points
 
-@router.get("/errors", response_model=ErrorAnalysis)
+@router.get(
+    "/errors",
+    response_model=ErrorAnalysis,
+    summary="Error analysis (demo)",
+    description="Error rates, total errors, and breakdown by type.",
+)
 async def get_error_analysis(
     hours: int = Query(24, description="Hours of error data to analyze"),
     db: AsyncSession = Depends(get_db)
@@ -170,21 +210,54 @@ async def get_error_analysis(
         analysis_period=f"{hours} hours",
     )
 
-@router.get("/latency", response_model=LatencyStats, summary="Latency percentiles", description="Percentiles for time-to-first-byte (TTFB) and time-to-full-answer (TTFA) using chat events.")
+@router.get(
+    "/latency",
+    response_model=LatencyStats,
+    summary="Latency percentiles",
+    description="Percentiles for time-to-first-byte (TTFB) and time-to-full-answer (TTFA) computed from chat events.",
+    responses={
+        200: {
+            "description": "Latency stats",
+            "content": {
+                "application/json": {
+                    "example": {
+                        "p50_ttfb_ms": 180.0,
+                        "p95_ttfb_ms": 520.0,
+                        "p99_ttfb_ms": 950.0,
+                        "p50_ttfa_ms": 650.0,
+                        "p95_ttfa_ms": 1800.0,
+                        "p99_ttfa_ms": 3200.0,
+                        "samples": 2750
+                    }
+                }
+            },
+        }
+    },
+)
 async def get_latency(
     db: AsyncSession = Depends(get_db)
 ):
     stats = await AnalyticsService.get_latency_stats(db)
     return LatencyStats(**stats)
 
-@router.get("/tool-usage", response_model=ToolUsageResponse, summary="RAG tool usage", description="Aggregates tool_search_documents events into started/completed/failed counts and average retrieved documents.")
+@router.get(
+    "/tool-usage",
+    response_model=ToolUsageResponse,
+    summary="RAG tool usage",
+    description="Aggregates tool_search_documents events with started/completed/failed counts and average retrieved docs (overall and by collection).",
+)
 async def get_tool_usage(
     db: AsyncSession = Depends(get_db)
 ):
     data = await AnalyticsService.get_tool_usage(db)
     return ToolUsageResponse(**data)
 
-@router.get("/collections-health", response_model=List[CollectionHealthItem], summary="Collections health", description="Webpages/documents counts and indexing freshness per collection.")
+@router.get(
+    "/collections-health",
+    response_model=List[CollectionHealthItem],
+    summary="Collections health",
+    description="Webpages/documents counts and indexing freshness per collection.",
+)
 async def get_collections_health(
     db: AsyncSession = Depends(get_db)
 ):

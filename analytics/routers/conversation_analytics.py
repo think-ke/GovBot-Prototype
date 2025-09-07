@@ -26,7 +26,26 @@ from ..services import AnalyticsService
 
 router = APIRouter()
 
-@router.get("/summary", response_model=ConversationSummary)
+@router.get(
+    "/summary",
+    response_model=ConversationSummary,
+    summary="Conversation summary KPIs",
+    description="Totals, average turns, and an estimated completion rate for the selected window.",
+    responses={
+        200: {
+            "description": "Summary KPIs",
+            "content": {
+                "application/json": {
+                    "example": {
+                        "total_conversations": 1243,
+                        "avg_turns": 4.1,
+                        "completion_rate": 76.5
+                    }
+                }
+            },
+        }
+    },
+)
 async def get_conversation_summary(
     start_date: Optional[datetime] = Query(None, description="Start date for analysis"),
     end_date: Optional[datetime] = Query(None, description="End date for analysis"),
@@ -75,7 +94,12 @@ async def get_conversation_summary(
         completion_rate=round(completion_rate, 1)
     )
 
-@router.get("/flows", response_model=List[ConversationFlow])
+@router.get(
+    "/flows",
+    response_model=List[ConversationFlow],
+    summary="Conversation flow analysis",
+    description="Turn-number buckets with completion and abandonment rates; averages are illustrative in dev.",
+)
 async def get_conversation_flows(
     start_date: Optional[datetime] = Query(None, description="Start date for analysis"),
     end_date: Optional[datetime] = Query(None, description="End date for analysis"),
@@ -91,7 +115,12 @@ async def get_conversation_flows(
     """
     return await AnalyticsService.get_conversation_turn_analysis(db, start_date, end_date)
 
-@router.get("/intents", response_model=List[IntentAnalysis])
+@router.get(
+    "/intents",
+    response_model=List[IntentAnalysis],
+    summary="Intent analysis (demo)",
+    description="Most common intents with success rates. Placeholder values until NLP classification is wired.",
+)
 async def get_intent_analysis(
     start_date: Optional[datetime] = Query(None, description="Start date for analysis"),
     end_date: Optional[datetime] = Query(None, description="End date for analysis"),
@@ -128,7 +157,12 @@ async def get_intent_analysis(
         )
     ]
 
-@router.get("/document-retrieval", response_model=List[DocumentRetrieval])
+@router.get(
+    "/document-retrieval",
+    response_model=List[DocumentRetrieval],
+    summary="Document retrieval patterns (demo)",
+    description="Top document types and success rates. Demo values in dev.",
+)
 async def get_document_retrieval_analysis(
     start_date: Optional[datetime] = Query(None, description="Start date for analysis"),
     end_date: Optional[datetime] = Query(None, description="End date for analysis"),
@@ -164,7 +198,12 @@ async def get_document_retrieval_analysis(
         )
     ]
 
-@router.get("/drop-offs", response_model=DropOffData)
+@router.get(
+    "/drop-offs",
+    response_model=DropOffData,
+    summary="Drop-off analysis (demo)",
+    description="Common abandonment points by turn and typical triggers.",
+)
 async def get_conversation_drop_offs(
     start_date: Optional[datetime] = Query(None, description="Start date for analysis"),
     end_date: Optional[datetime] = Query(None, description="End date for analysis"),
@@ -192,7 +231,12 @@ async def get_conversation_drop_offs(
         ],
     )
 
-@router.get("/sentiment-trends", response_model=SentimentTrends)
+@router.get(
+    "/sentiment-trends",
+    response_model=SentimentTrends,
+    summary="Sentiment trends (demo)",
+    description="Distribution of positive/neutral/negative over the period.",
+)
 async def get_conversation_sentiment_trends(
     start_date: Optional[datetime] = Query(None, description="Start date for analysis"),
     end_date: Optional[datetime] = Query(None, description="End date for analysis"),
@@ -219,7 +263,12 @@ async def get_conversation_sentiment_trends(
         ],
     )
 
-@router.get("/knowledge-gaps", response_model=KnowledgeGaps)
+@router.get(
+    "/knowledge-gaps",
+    response_model=KnowledgeGaps,
+    summary="Knowledge gaps (demo)",
+    description="Queries/topics with low success that may need content improvements.",
+)
 async def get_knowledge_gaps(
     start_date: Optional[datetime] = Query(None, description="Start date for analysis"),
     end_date: Optional[datetime] = Query(None, description="End date for analysis"),
@@ -261,7 +310,32 @@ async def get_knowledge_gaps(
         ],
     )
 
-@router.get("/no-answer", response_model=NoAnswerStats)
+@router.get(
+    "/no-answer",
+    response_model=NoAnswerStats,
+    summary="No‑answer rate and examples",
+    description="Heuristic estimate of no‑answer responses plus example snippets and top error triggers.",
+    responses={
+        200: {
+            "description": "No‑answer stats",
+            "content": {
+                "application/json": {
+                    "example": {
+                        "rate": 6.2,
+                        "examples": [
+                            {
+                                "chat_id": 3574,
+                                "message_id": "abc-123",
+                                "snippet": "I'm sorry, but I don't have that information."
+                            }
+                        ],
+                        "top_triggers": ["missing_policy", "unsupported_service"]
+                    }
+                }
+            },
+        }
+    },
+)
 async def get_no_answer_stats(
     examples: int = Query(5, description="Number of example snippets to include"),
     db: AsyncSession = Depends(get_db)
@@ -273,7 +347,28 @@ async def get_no_answer_stats(
     data = await AnalyticsService.get_no_answer_stats(db, examples_limit=examples)
     return NoAnswerStats(**data)
 
-@router.get("/citations", response_model=CitationStats)
+@router.get(
+    "/citations",
+    response_model=CitationStats,
+    summary="Citation coverage",
+    description="Share of assistant answers that include sources and average citations per answer; grouped by collection where possible.",
+    responses={
+        200: {
+            "description": "Citation coverage",
+            "content": {
+                "application/json": {
+                    "example": {
+                        "coverage_pct": 72.4,
+                        "avg_citations": 2.1,
+                        "by_collection": [
+                            {"collection_id": "odpc", "coverage_pct": 80.0, "avg_citations": 2.3}
+                        ]
+                    }
+                }
+            },
+        }
+    },
+)
 async def get_citation_stats(
     db: AsyncSession = Depends(get_db)
 ):
@@ -281,7 +376,29 @@ async def get_citation_stats(
     data = await AnalyticsService.get_citation_stats(db)
     return CitationStats(**data)
 
-@router.get("/answer-length", response_model=AnswerLengthStats)
+@router.get(
+    "/answer-length",
+    response_model=AnswerLengthStats,
+    summary="Answer length distribution",
+    description="Average, median, and word-count buckets for assistant messages.",
+    responses={
+        200: {
+            "description": "Answer length stats",
+            "content": {
+                "application/json": {
+                    "example": {
+                        "avg_words": 85.3,
+                        "median_words": 72.0,
+                        "distribution": [
+                            {"bucket": "0-20", "count": 15, "percentage": 3.2},
+                            {"bucket": "21-50", "count": 120, "percentage": 25.0}
+                        ]
+                    }
+                }
+            },
+        }
+    },
+)
 async def get_answer_length_stats(
     db: AsyncSession = Depends(get_db)
 ):
