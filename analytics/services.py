@@ -959,6 +959,106 @@ class AnalyticsService:
             "analysis_period": f"{hours} hours",
         }
 
+    @staticmethod
+    async def get_capacity_metrics(db: AsyncSession, hours: int = 24, max_capacity: int = 100) -> Dict[str, Any]:
+        """
+        Estimate capacity using minute-level concurrency derived from chat_events.
+        - Build message intervals: [message_received, first(agent_thinking or response_generation) OR last if missing].
+        - Sample concurrency at 1-minute granularity within the window.
+        - Compute p95 concurrency and utilization vs provided max capacity.
+        """
+        q = text(
+            """
+            WITH mr AS (
+                SELECT session_id, message_id, MIN(timestamp) AS mr_ts
+                FROM chat_events
+                WHERE event_type = 'message_received'
+                  AND timestamp >= NOW() - (INTERVAL '1 hour' * :hours)
+                GROUP BY session_id, message_id
+            ), at AS (
+                SELECT session_id, message_id, MIN(timestamp) AS at_start, MAX(timestamp) AS at_end
+                FROM chat_events
+                WHERE event_type = 'agent_thinking'
+                  AND timestamp >= NOW() - (INTERVAL '1 hour' * :hours)
+                GROUP BY session_id, message_id
+            ), rg AS (
+                SELECT session_id, message_id, MIN(timestamp) AS rg_start, MAX(timestamp) AS rg_end
+                FROM chat_events
+                WHERE event_type = 'response_generation'
+                  AND timestamp >= NOW() - (INTERVAL '1 hour' * :hours)
+                GROUP BY session_id, message_id
+            ), intervals AS (
+                SELECT
+                    mr.session_id,
+                    mr.message_id,
+                    mr.mr_ts AS start_ts,
+                    -- Choose earliest available end among starts; fallback to latest end; fallback to +60s
+                    COALESCE(
+                        LEAST(NULLIF(at.at_start, NULL), NULLIF(rg.rg_start, NULL)),
+                        GREATEST(COALESCE(at.at_end, mr.mr_ts), COALESCE(rg.rg_end, mr.mr_ts)),
+                        mr.mr_ts + INTERVAL '60 seconds'
+                    ) AS end_ts
+                FROM mr
+                LEFT JOIN at ON at.session_id = mr.session_id AND at.message_id = mr.message_id
+                LEFT JOIN rg ON rg.session_id = mr.session_id AND rg.message_id = mr.message_id
+            ), norm AS (
+                SELECT session_id, message_id,
+                       start_ts,
+                       CASE WHEN end_ts > start_ts THEN end_ts ELSE start_ts + INTERVAL '1 second' END AS end_ts
+                FROM intervals
+            ), series AS (
+                SELECT gs AS ts
+                FROM generate_series(
+                    date_trunc('minute', NOW() - (INTERVAL '1 hour' * :hours)),
+                    date_trunc('minute', NOW()),
+                    INTERVAL '1 minute'
+                ) AS gs
+            ), conc AS (
+                SELECT s.ts,
+                       COUNT(*)::INT AS concurrent_msgs
+                FROM series s
+                JOIN norm i
+                  ON i.start_ts <= s.ts AND i.end_ts > s.ts
+                GROUP BY s.ts
+            )
+            SELECT
+                COALESCE(PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY concurrent_msgs), 0) AS p95_conc,
+                COALESCE(MAX(concurrent_msgs), 0) AS max_conc,
+                COALESCE(AVG(concurrent_msgs), 0) AS avg_conc
+            FROM conc
+            """
+        )
+        res = await db.execute(q, {"hours": hours})
+        row = res.mappings().first() or {}
+        p95_conc = float(row.get("p95_conc") or 0.0)
+        max_conc = float(row.get("max_conc") or 0.0)
+        avg_conc = float(row.get("avg_conc") or 0.0)
+
+        utilization = 0.0
+        if max_capacity > 0:
+            utilization = min(100.0, round((p95_conc / max_capacity) * 100.0, 2))
+
+        if utilization >= 90:
+            scaling_status = "critical"
+            current_load = "high"
+        elif utilization >= 70:
+            scaling_status = "scale_recommended"
+            current_load = "elevated"
+        elif utilization >= 40:
+            scaling_status = "adequate"
+            current_load = "moderate"
+        else:
+            scaling_status = "underutilized"
+            current_load = "low"
+
+        return {
+            "current_load": current_load,
+            "capacity_utilization": utilization,
+            "concurrent_sessions": int(round(p95_conc)),
+            "scaling_status": scaling_status,
+            "recommendations": [],
+        }
+
     # ===== New methods =====
     @staticmethod
     async def get_latency_stats(db: AsyncSession) -> Dict[str, Any]:

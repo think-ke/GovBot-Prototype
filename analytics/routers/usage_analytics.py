@@ -102,26 +102,15 @@ async def get_peak_hours_analysis(
     "/capacity",
     response_model=CapacityMetrics,
     summary="System capacity & scaling",
-    description="Current load, utilization and scaling recommendations.",
+    description="Current load, utilization and scaling recommendations (p95 concurrency vs configured capacity).",
 )
 async def get_capacity_metrics(
+    hours: int = Query(24, description="Hours of activity to analyze"),
+    max_capacity: int = Query(100, description="Configured max concurrent sessions capacity for utilization calc"),
     db: AsyncSession = Depends(get_db)
 ):
-    """
-    Get system capacity and scaling metrics.
-    
-    Returns:
-    - Current load levels
-    - Capacity utilization
-    - Scaling recommendations
-    """
-    return CapacityMetrics(
-        current_load="moderate",
-        capacity_utilization=65.3,
-        concurrent_sessions=45,
-        scaling_status="adequate",
-        recommendations=[],
-    )
+    data = await AnalyticsService.get_capacity_metrics(db, hours=hours, max_capacity=max_capacity)
+    return CapacityMetrics(**data)
 
 @router.get(
     "/hourly-traffic",

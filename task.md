@@ -190,11 +190,11 @@ P5) Usage → Capacity (approximation)
 - Goal: capacity_utilization, concurrent_sessions, scaling status.
 - Data: chat_events intervals per message (received→first response start/end).
 - Tasks:
-   - [ ] Service: `get_capacity_metrics(db, hours=24, max_capacity: int)` estimating 95th percentile concurrency vs max.
-   - [ ] Router: call service (replace demo).
+   - [x] Service: `get_capacity_metrics(db, hours=24, max_capacity: int)` estimating 95th percentile concurrency vs max.
+   - [x] Router: call service (replace demo).
    - [ ] Config: env var `MAX_CONCURRENCY_CAPACITY` with safe default.
 - Acceptance:
-   - [ ] utilization in [0,100]; concurrent_sessions ≥ 0; status derived by thresholds.
+   - [x] utilization in [0,100]; concurrent_sessions ≥ 0; status derived by thresholds.
 
 P6) Conversation → Intents (heuristic)
 - Goal: Basic intent labels without external NLP.
