@@ -17,11 +17,22 @@ router = APIRouter()
     "/traffic",
     response_model=TrafficMetrics,
     summary="Traffic and volume",
-    description="Totals for sessions/messages, unique users, peak hours, and growth trend over the period.",
+    description=(
+        "Totals for sessions/messages, unique users, peak hours, and growth trend over the period.\n\n"
+        "Date parameters accept ISO 8601 UTC strings, e.g., 2025-09-01T00:00:00Z"
+    ),
 )
 async def get_traffic_metrics(
-    start_date: Optional[datetime] = Query(None, description="Start date for analysis"),
-    end_date: Optional[datetime] = Query(None, description="End date for analysis"),
+    start_date: Optional[datetime] = Query(
+        None,
+        description="Start date for analysis (ISO 8601, UTC)",
+        example="2025-09-01T00:00:00Z",
+    ),
+    end_date: Optional[datetime] = Query(
+        None,
+        description="End date for analysis (ISO 8601, UTC)",
+        example="2025-09-07T23:59:59Z",
+    ),
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -39,11 +50,22 @@ async def get_traffic_metrics(
     "/session-duration",
     response_model=SessionDuration,
     summary="Session duration analysis",
-    description="Average/median session durations and distribution buckets (minutes).",
+    description=(
+        "Average/median session durations and distribution buckets (minutes).\n\n"
+        "Date parameters accept ISO 8601 UTC strings, e.g., 2025-09-01T00:00:00Z"
+    ),
 )
 async def get_session_duration_analysis(
-    start_date: Optional[datetime] = Query(None, description="Start date for analysis"),
-    end_date: Optional[datetime] = Query(None, description="End date for analysis"),
+    start_date: Optional[datetime] = Query(
+        None,
+        description="Start date for analysis (ISO 8601, UTC)",
+        example="2025-09-01T00:00:00Z",
+    ),
+    end_date: Optional[datetime] = Query(
+        None,
+        description="End date for analysis (ISO 8601, UTC)",
+        example="2025-09-07T23:59:59Z",
+    ),
     db: AsyncSession = Depends(get_db)
 ):
     """

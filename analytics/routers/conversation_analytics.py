@@ -47,8 +47,16 @@ router = APIRouter()
     },
 )
 async def get_conversation_summary(
-    start_date: Optional[datetime] = Query(None, description="Start date for analysis"),
-    end_date: Optional[datetime] = Query(None, description="End date for analysis"),
+    start_date: Optional[datetime] = Query(
+        None,
+        description="Start date for analysis (ISO 8601, UTC)",
+        example="2025-09-01T00:00:00Z",
+    ),
+    end_date: Optional[datetime] = Query(
+        None,
+        description="End date for analysis (ISO 8601, UTC)",
+        example="2025-09-07T23:59:59Z",
+    ),
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -56,7 +64,6 @@ async def get_conversation_summary(
     Returns total conversations, average turns per conversation, and an estimated completion rate.
     """
     # Leverage AnalyticsService for underlying computations where possible
-    from ..services import AnalyticsService
 
     flows = await AnalyticsService.get_conversation_turn_analysis(db, start_date, end_date)
 
@@ -101,8 +108,16 @@ async def get_conversation_summary(
     description="Turn-number buckets with completion and abandonment rates; averages are illustrative in dev.",
 )
 async def get_conversation_flows(
-    start_date: Optional[datetime] = Query(None, description="Start date for analysis"),
-    end_date: Optional[datetime] = Query(None, description="End date for analysis"),
+    start_date: Optional[datetime] = Query(
+        None,
+        description="Start date for analysis (ISO 8601, UTC)",
+        example="2025-09-01T00:00:00Z",
+    ),
+    end_date: Optional[datetime] = Query(
+        None,
+        description="End date for analysis (ISO 8601, UTC)",
+        example="2025-09-07T23:59:59Z",
+    ),
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -122,8 +137,16 @@ async def get_conversation_flows(
     description="Heuristic intents inferred from user message keywords and RAG usage; success proxied by presence of citations.",
 )
 async def get_intent_analysis(
-    start_date: Optional[datetime] = Query(None, description="Start date for analysis"),
-    end_date: Optional[datetime] = Query(None, description="End date for analysis"),
+    start_date: Optional[datetime] = Query(
+        None,
+        description="Start date for analysis (ISO 8601, UTC)",
+        example="2025-09-01T00:00:00Z",
+    ),
+    end_date: Optional[datetime] = Query(
+        None,
+        description="End date for analysis (ISO 8601, UTC)",
+        example="2025-09-07T23:59:59Z",
+    ),
     limit: int = Query(20, description="Maximum number of intents to return"),
     db: AsyncSession = Depends(get_db)
 ):
@@ -145,8 +168,16 @@ async def get_intent_analysis(
     description="Top collections accessed and retrieval success rates from tool_search_documents events.",
 )
 async def get_document_retrieval_analysis(
-    start_date: Optional[datetime] = Query(None, description="Start date for analysis"),
-    end_date: Optional[datetime] = Query(None, description="End date for analysis"),
+    start_date: Optional[datetime] = Query(
+        None,
+        description="Start date for analysis (ISO 8601, UTC)",
+        example="2025-09-01T00:00:00Z",
+    ),
+    end_date: Optional[datetime] = Query(
+        None,
+        description="End date for analysis (ISO 8601, UTC)",
+        example="2025-09-07T23:59:59Z",
+    ),
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -167,8 +198,16 @@ async def get_document_retrieval_analysis(
     description="Common abandonment points by turn and typical triggers from recent errors/no-answer heuristics.",
 )
 async def get_conversation_drop_offs(
-    start_date: Optional[datetime] = Query(None, description="Start date for analysis"),
-    end_date: Optional[datetime] = Query(None, description="End date for analysis"),
+    start_date: Optional[datetime] = Query(
+        None,
+        description="Start date for analysis (ISO 8601, UTC)",
+        example="2025-09-01T00:00:00Z",
+    ),
+    end_date: Optional[datetime] = Query(
+        None,
+        description="End date for analysis (ISO 8601, UTC)",
+        example="2025-09-07T23:59:59Z",
+    ),
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -192,8 +231,16 @@ async def get_conversation_drop_offs(
     description="Distribution of positive/neutral/negative over the period from VADER analyzer.",
 )
 async def get_conversation_sentiment_trends(
-    start_date: Optional[datetime] = Query(None, description="Start date for analysis"),
-    end_date: Optional[datetime] = Query(None, description="End date for analysis"),
+    start_date: Optional[datetime] = Query(
+        None,
+        description="Start date for analysis (ISO 8601, UTC)",
+        example="2025-09-01T00:00:00Z",
+    ),
+    end_date: Optional[datetime] = Query(
+        None,
+        description="End date for analysis (ISO 8601, UTC)",
+        example="2025-09-07T23:59:59Z",
+    ),
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -214,8 +261,16 @@ async def get_conversation_sentiment_trends(
     description="Topics inferred from recent no-answer triggers; success proxy derived from no-answer rate.",
 )
 async def get_knowledge_gaps(
-    start_date: Optional[datetime] = Query(None, description="Start date for analysis"),
-    end_date: Optional[datetime] = Query(None, description="End date for analysis"),
+    start_date: Optional[datetime] = Query(
+        None,
+        description="Start date for analysis (ISO 8601, UTC)",
+        example="2025-09-01T00:00:00Z",
+    ),
+    end_date: Optional[datetime] = Query(
+        None,
+        description="End date for analysis (ISO 8601, UTC)",
+        example="2025-09-07T23:59:59Z",
+    ),
     threshold: float = Query(0.3, description="Success rate threshold for identifying gaps"),
     db: AsyncSession = Depends(get_db)
 ):
