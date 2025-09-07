@@ -1,4 +1,0 @@
-services:
-  govstack-server:
-    environment:
-      - DB_AUTO_CREATE=true
