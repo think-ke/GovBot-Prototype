@@ -2,6 +2,8 @@
 
 GovStack is an intelligent document management and citizen assistance system designed to handle government-related documents with secure storage, retrieval, and processing capabilities. The system is specifically tailored to support eCitizen services in Kenya through AI-powered information retrieval and assistance.
 
+Quick link: See the full documentation index at ./docs/README.md
+
 ## Features
 
 ### Core Features
@@ -129,7 +131,7 @@ This diagram illustrates the core components and data flow of the GovStack syste
 - **Analytics Module**:
   - Production API: http://localhost:8005
   - Development API: http://localhost:8006
-  - API Documentation: http://localhost:8005/docs
+   - API Documentation: http://localhost:8005/analytics/docs
   - Health Check: http://localhost:8005/analytics/health
 
 - **Analytics Dashboard**:
@@ -156,6 +158,49 @@ GovStack provides a full OpenAPI-compliant REST API. You can access the interact
 
 - Production: http://localhost:5000/docs
 - Development: http://localhost:5005/docs
+
+See also:
+- Full API reference: ./docs/API_REFERENCE.md
+- Analytics API reference: http://localhost:8005/analytics/docs (when analytics is running)
+
+## Documentation
+
+Start here for design, security, analytics, and integration details:
+
+- Architecture and security
+   - Technical Design: ./docs/technical_design.md
+   - Security Guidelines: ./docs/SECURITY.md
+   - Privacy & PII (Presidio): ./docs/PII_PRESIDIO_SETUP.md
+   - Risk Mitigation (overview): ./docs/RISK_MITIGATION_OVERVIEW_PUBLIC.md
+   - Risk Mitigation (plan): ./docs/RISK_MITIGATION_PLAN.md
+   - Data Quality Framework: ./docs/dqf.md
+   - Data Provenance: ./docs/DATA_PROVENANCE_ANALYSIS.md
+
+- Chat, events, and ratings
+   - Chat Event Tracking (backend): ./docs/CHAT_EVENT_TRACKING_SYSTEM.md
+   - Chat Event Tracking (frontend guide): ./docs/CHAT_EVENT_TRACKING_FRONTEND_GUIDE.md
+   - Message Rating System: ./docs/MESSAGE_RATING_SYSTEM.md
+   - Fallback & Escalation: ./docs/FALLBACK_AND_ESCALATION.md
+
+- LlamaIndex orchestration
+   - Orchestrator: ./docs/LLAMAINDEX_ORCHESTRATOR.md
+   - Usage Tracking Requirements: ./docs/LLAMAINDEX_USAGE_TRACKING_REQUIREMENTS.md
+
+- Analytics service and dashboards
+   - Analytics Service README: ./analytics/README.md
+   - Analytics Module Technical Docs: ./docs/ANALYTICS_MODULE_DOCUMENTATION.md
+   - Analytics Dashboard Specification: ./docs/ANALYTICS_DASHBOARD_SPECIFICATION.md
+   - Composite Sentiment API: ./analytics/COMPOSITE_METRICS_API.md
+   - Sentiment Analysis (VADER): ./analytics/SENTIMENT_ANALYSIS.md
+   - Analytics Tests: ./analytics/README_TESTS.md
+
+- Metabase and BI
+   - Metabase Setup: ./docs/METABASE_SETUP.md
+
+- Testing
+   - Test Plan: ./docs/TEST_PLAN.md
+   - Testing Protocols: ./docs/TESTING_PROTOCOLS.md
+   - Test Suite README: ./tests/README.md
 
 ### Key API Endpoints
 
@@ -338,6 +383,15 @@ govstack/
 │       ├── prompts.py           # LLM prompt templates
 │       ├── storage.py           # Storage utilities (MinIO interface)
 │       └── README_chat_persistence.md  # Chat persistence documentation
+├── analytics/            # Analytics microservice (FastAPI)
+│   ├── README.md         # Analytics service overview and endpoints
+│   ├── main.py           # FastAPI app entrypoint for analytics
+│   ├── routers/          # User/Usage/Conversation routers
+│   ├── services.py       # Analytics calculations
+│   ├── schemas.py        # Pydantic response models
+│   ├── models.py         # Local ORM models used by analytics
+│   ├── requirements.txt  # Service dependencies
+│   └── tests/            # Contract tests for analytics endpoints
 ├── backups/              # Database backup storage
 │   └── prod/            # Production database backups
 ├── data/                 # Persistent data storage (created by containers)
@@ -355,6 +409,8 @@ govstack/
 │   └── backup.Dockerfile # Database backup container definition
 ├── docs/                 # Documentation files
 │   ├── dqf.md           # Data Quality Framework documentation
+│   ├── ANALYTICS_MODULE_DOCUMENTATION.md  # Analytics module deep-dive
+│   ├── ANALYTICS_DASHBOARD_SPECIFICATION.md # Analytics dashboard spec
 │   ├── GovStack_Detailed_Presentation_Slides.md
 │   ├── GovStack_Technical_Architecture_Presentation.md
 │   ├── implementation_status.md  # Implementation status tracking

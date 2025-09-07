@@ -7,10 +7,15 @@ The GovStack Analytics Module provides comprehensive insights into AI assistant 
 ## Architecture Overview
 
 ### Microservice Design
-- **Service**: Standalone FastAPI application (`/analytics/`)
+- **Service**: Standalone FastAPI application (base path `/analytics`)
 - **Database**: Connects to main GovStack PostgreSQL database
 - **API Structure**: RESTful endpoints organized by analytics category
-- **Documentation**: Auto-generated Swagger UI at `/analytics/docs`
+- **Documentation**: Swagger UI at `/analytics/docs`, ReDoc at `/analytics/redoc`
+
+### Service Root & Health
+- `GET /analytics` — Service info and base paths
+- `GET /analytics/health` — Liveness
+- `GET /analytics/health/db` — DB connectivity and latency
 
 ### Core Components
 1. **Analytics API** (`analytics/main.py`) - FastAPI application
@@ -21,13 +26,16 @@ The GovStack Analytics Module provides comprehensive insights into AI assistant 
 
 ## Analytics Categories
 
-### 1. User Analytics (`/analytics/user/`)
+### 1. User Analytics (`/analytics/user`)
 *Understanding user demographics, behavior patterns, and satisfaction*
 
 #### Endpoints:
-- `GET /analytics/user/demographics` - User growth and demographic metrics
-- `GET /analytics/user/session-frequency` - Session patterns and power user analysis
-- `GET /analytics/user/sentiment` - User satisfaction and sentiment analysis
+- `GET /analytics/user/session-frequency` — Session patterns and power user analysis
+- `GET /analytics/user/sentiment` — Composite sentiment (VADER + explicit ratings)
+- `GET /analytics/user/top` — Top users ranked by activity
+- `GET /analytics/user/{user_id}/metrics` — Per-user KPIs
+
+Note: Demographics, retention, and geographic endpoints are optional and not enabled by default in the current router.
 
 #### Key Metrics:
 - **Total Users**: Unique users over time period
@@ -35,13 +43,21 @@ The GovStack Analytics Module provides comprehensive insights into AI assistant 
 - **Session Frequency**: User engagement patterns and power user identification
 - **User Sentiment**: Satisfaction analysis from message ratings and feedback
 
-### 2. Usage Analytics (`/analytics/usage/`)
+### 2. Usage Analytics (`/analytics/usage`)
 *Monitoring system health, traffic patterns, and operational metrics*
 
 #### Endpoints:
-- `GET /analytics/usage/traffic` - Traffic patterns and request volumes
-- `GET /analytics/usage/session-duration` - Session length analysis
-- `GET /analytics/usage/peak-hours` - Peak usage time identification
+- `GET /analytics/usage/traffic` — Traffic patterns and request volumes
+- `GET /analytics/usage/session-duration` — Session length analysis
+- `GET /analytics/usage/system-health` — Response times, error rate, uptime window
+- `GET /analytics/usage/peak-hours` — Peak usage time identification
+- `GET /analytics/usage/capacity` — Utilization vs configured capacity
+- `GET /analytics/usage/errors` — Error rate and breakdown
+- `GET /analytics/usage/hourly-traffic` — 24 UTC buckets over N days
+- `GET /analytics/usage/response-times` — Daily p50/p95/p99 (TTFA)
+- `GET /analytics/usage/latency` — TTFB/TTFA percentiles (overall)
+- `GET /analytics/usage/tool-usage` — RAG tool event stats
+- `GET /analytics/usage/collections-health` — Documents/webpages and freshness by collection
 
 #### Key Metrics:
 - **Traffic Volume**: Messages per hour/day/week
@@ -49,13 +65,20 @@ The GovStack Analytics Module provides comprehensive insights into AI assistant 
 - **Peak Hours**: High-traffic time periods
 - **System Performance**: Response times and throughput
 
-### 3. Conversation Analytics (`/analytics/conversation/`)
+### 3. Conversation Analytics (`/analytics/conversation`)
 *Analyzing dialogue flows, intent patterns, and conversation quality*
 
 #### Endpoints:
-- `GET /analytics/conversation/flow` - Conversation pattern analysis
-- `GET /analytics/conversation/intent-analysis` - Intent classification and trends
-- `GET /analytics/conversation/quality-metrics` - Response quality assessment
+- `GET /analytics/conversation/summary` — Totals, avg turns, completion estimate
+- `GET /analytics/conversation/flows` — Turn buckets with completion/abandonment
+- `GET /analytics/conversation/intents` — Heuristic intents and success
+- `GET /analytics/conversation/document-retrieval` — RAG collection access
+- `GET /analytics/conversation/drop-offs` — Abandonment points and triggers
+- `GET /analytics/conversation/sentiment-trends` — Positive/neutral/negative distribution
+- `GET /analytics/conversation/knowledge-gaps` — Topics inferred from no‑answer triggers
+- `GET /analytics/conversation/no-answer` — No‑answer rate and examples
+- `GET /analytics/conversation/citations` — Citation coverage overall/by collection
+- `GET /analytics/conversation/answer-length` — Word-count distribution
 
 #### Key Metrics:
 - **Conversation Flow**: Message exchange patterns
@@ -63,13 +86,18 @@ The GovStack Analytics Module provides comprehensive insights into AI assistant 
 - **Quality Scores**: Response accuracy and helpfulness ratings
 - **Resolution Rates**: Successful conversation outcomes
 
-### 4. Business Analytics (`/analytics/business/`)
+### 4. Business Analytics (`/analytics/business`)
 *Measuring ROI, automation rates, and business impact*
 
-#### Endpoints:
-- `GET /analytics/business/roi` - Return on investment calculations
-- `GET /analytics/business/containment-rate` - Self-service success rates
-- `GET /analytics/business/cost-savings` - Operational cost reduction metrics
+Optional: The business router exists but is not included by default. Enable it only if your data sources are ready.
+
+#### Endpoints (available when router is included):
+- `GET /analytics/business/roi`
+- `GET /analytics/business/containment`
+- `GET /analytics/business/business-flow-success`
+- `GET /analytics/business/cost-analysis`
+- `GET /analytics/business/performance-benchmarks`
+- Dashboards: `/analytics/business/dashboard/{executive|operations|product-optimization|business-intelligence}`
 
 #### Key Metrics:
 - **ROI Calculation**: Cost savings vs implementation costs

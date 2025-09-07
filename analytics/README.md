@@ -22,110 +22,130 @@ The analytics service is organized into four key analytics categories based on t
 
 ### Usage Analytics (`/analytics/usage`)
 - `GET /traffic` - Traffic and volume metrics
-- `GET /session-duration` - Session duration analysis
-- `GET /system-health` - Real-time system health metrics
-- `GET /peak-hours` - Peak hours analysis
-- `GET /capacity` - System capacity and scaling metrics
-- `GET /errors` - Error analysis and monitoring
+# Analytics Microservice
+
+FastAPI service that powers the GovStack analytics dashboards. It aggregates traffic, usage, and conversation insights from the shared database and exposes typed APIs for the frontend.
+
+## What’s included
+
+- FastAPI app with OpenAPI docs at `/analytics/docs`
+- Routers: User, Usage, Conversation (business analytics code exists but is not wired by default)
+- Pydantic schemas aligned with the analytics dashboard UI
+- Service health checks (app and DB)
+- Optional composite user sentiment using VADER + explicit ratings
+
+## Service base and health
+
+- Service root: `GET /analytics` (lists base paths and version)
+- Liveness: `GET /analytics/health`
+- DB connectivity: `GET /analytics/health/db`
+- Docs: Swagger `/analytics/docs`, ReDoc `/analytics/redoc`
+
+## Active API endpoints
+
+The app includes three routers by default (see `analytics/main.py`). Dates accept ISO 8601 UTC, e.g., `2025-09-01T00:00:00Z`.
+
+### User Analytics (`/analytics/user`)
+- `GET /session-frequency` — Top users by sessions and visit history
+- `GET /sentiment` — Composite sentiment and satisfaction (VADER + ratings)
+- `GET /top` — Top users ranked by sessions/messages
+- `GET /{user_id}/metrics` — Per-user KPIs across the selected window
+
+Note: Demographics, retention, and geographic endpoints are not enabled by default in the current router.
+
+### Usage Analytics (`/analytics/usage`)
+- `GET /traffic` — Sessions, messages, unique users, peak hours, trend
+- `GET /session-duration` — Avg/median duration and distribution buckets
+- `GET /system-health` — Response times (p50/p95/p99), error rate, uptime window
+- `GET /peak-hours` — Ranked busy hours (UTC)
+- `GET /capacity` — Utilization vs configured capacity with tips
+- `GET /errors` — Error rate and breakdown
+- `GET /hourly-traffic` — 24 buckets aggregated over N days
+- `GET /response-times` — Daily p50/p95/p99 (TTFA) for last N days
+- `GET /latency` — Percentiles for TTFB/TTFA (overall)
+- `GET /tool-usage` — RAG tool usage (overall and by collection)
+- `GET /collections-health` — Documents/webpages counts and freshness by collection
 
 ### Conversation Analytics (`/analytics/conversation`)
-- `GET /flows` - Conversation flow analysis
-- `GET /intents` - Intent analysis from conversations
-- `GET /document-retrieval` - Document retrieval patterns
-- `GET /drop-offs` - Conversation drop-off analysis
-- `GET /sentiment-trends` - Sentiment trends in conversations
-- `GET /knowledge-gaps` - Knowledge gap identification
+- `GET /summary` — Total conversations, avg turns, completion rate estimate
+- `GET /flows` — Turn buckets with completion/abandonment and avg response time
+- `GET /intents` — Heuristic intents inferred from messages and RAG usage
+- `GET /document-retrieval` — Collection access and retrieval success
+- `GET /drop-offs` — Common abandonment points and triggers
+- `GET /sentiment-trends` — Positive/neutral/negative distribution over time
+- `GET /knowledge-gaps` — Topics inferred from no‑answer triggers
+- `GET /no-answer` — No‑answer rate, examples, and top triggers
+- `GET /citations` — Citation coverage overall and per collection
+- `GET /answer-length` — Word-count distribution and central tendencies
 
-### Business Analytics (`/analytics/business`)
-- `GET /roi` - ROI and cost-benefit analysis
-- `GET /containment` - Containment rate analysis
-- `GET /business-flow-success` - Business flow success metrics
-- `GET /cost-analysis` - Detailed cost analysis
-- `GET /performance-benchmarks` - Performance benchmarks
+### Optional: Business Analytics (not enabled by default)
 
-### Dashboard Endpoints
-- `GET /analytics/business/dashboard/executive` - Executive dashboard
-- `GET /analytics/business/dashboard/operations` - Operations dashboard
-- `GET /analytics/business/dashboard/product-optimization` - Product optimization dashboard
-- `GET /analytics/business/dashboard/business-intelligence` - Business intelligence dashboard
+Endpoints exist in `analytics/routers/business_analytics.py` (ROI, containment, dashboards) but are not included in `main.py`. If you need them, include the router in the app and ensure required data sources are present.
 
-## Installation
+## Setup
 
-1. Install dependencies:
-```bash
-pip install -r requirements.txt
-```
+### Requirements
 
-2. Set environment variables:
-```bash
-export DATABASE_URL="postgresql+asyncpg://user:password@localhost/govstackdb"
-```
+- Python 3.11+
+  - `chats`, `chat_messages` (conversation data)
+  - `documents`, `webpages` (RAG content health)
+  - `message_ratings` (for explicit user ratings; optional)
+  - `chat_events` (for latency/response-time metrics; required for some endpoints)
 
-## Running the Service
+### Install (local)
 
-### Development
-```bash
-python -m analytics.main
-```
+From repo root:
 
-### Production
-```bash
-uvicorn analytics.main:app --host 0.0.0.0 --port 8005
-```
+1) Install dependencies
+	- `pip install -r analytics/requirements.txt`
 
-## API Documentation
+2) Configure environment
+	- `DATABASE_URL=postgresql+asyncpg://user:pass@host:5432/govstackdb`
 
-Once running, visit:
-- Swagger UI: http://localhost:8005/analytics/docs
-- ReDoc: http://localhost:8005/analytics/redoc
+3) Run
+	- `python -m analytics.main` (serves on `:8005`)
 
-## Key Features
+### Docker Compose
 
-### Real-time Analytics
-- Live system health monitoring
-- Current session tracking
-- Real-time error rate monitoring
+`docker-compose.yml` builds and runs this service:
 
-### Historical Analysis
-- Trend analysis over custom date ranges
-- User behavior pattern identification
-- Performance benchmarking
+- Service: `analytics` on port `8005` (mapped from `${ANALYTICS_PORT:-8005}`)
+- Env: `DATABASE_URL` is set to point at the `postgres` service
+- Healthcheck: `GET /analytics/health`
 
-### Business Intelligence
-- ROI calculations and cost-benefit analysis
-- Automation rate tracking
-- Service effectiveness measurement
+The optional `analytics-dashboard` (Next.js) expects `ANALYTICS_API_URL=http://analytics:8005`.
 
-### Predictive Insights
-- User growth forecasting
-- Capacity planning recommendations
-- Performance trend predictions
+## Configuration
 
-## Data Sources
+- `DATABASE_URL` (required): async DSN, e.g. `postgresql+asyncpg://postgres:postgres@localhost/govstackdb`
+- CORS is open by default. Put the service behind your gateway in production.
+- Port: `8005`
 
-The analytics service leverages the following database tables:
-- `chats` - Chat conversation records
-- `chat_messages` - Individual message records
-- `documents` - Document access tracking
-- `webpages` - Webpage content and access patterns
+## Data and assumptions
 
-## Success Metrics
+Some endpoints compute metrics from tables that are not defined in this package but exist in the main app database:
 
-### Government Digital Transformation KPIs
-- **Citizen Experience**: Reduced wait times, 24/7 availability, higher satisfaction
-- **Operational Efficiency**: Cost reduction, increased throughput, reduced agent burden
-- **Strategic Value**: Digital adoption rates, service modernization, public trust
+- `chat_events`: used to derive latency and response-time trends
+- `message_ratings`: used for explicit ratings and composite satisfaction
 
-### Technical Performance Metrics
-- **Containment Rate**: 85%+ automation without human intervention
-- **Cost Savings**: 99%+ reduction in cost per interaction vs traditional channels
-- **Response Time**: <1 second average API response time
-- **Availability**: 99.9% uptime target
+If these tables are missing, affected endpoints will fail. Ensure the main application migrations have been applied to the shared database.
 
-## Integration
+## Testing
 
-The analytics service integrates with:
-- Main GovStack database for conversation and document data
-- System monitoring for health metrics
-- Token tracking system for cost analysis
-- Future: External BI tools and dashboards
+- Contract tests live in `analytics/tests` and use `httpx.ASGITransport`
+- Run from repo root: `pytest analytics/tests -q`
+
+See also: `analytics/README_TESTS.md`.
+
+## Related docs
+
+- Composite Sentiment API: `analytics/COMPOSITE_METRICS_API.md`
+- Sentiment Analysis (VADER): `analytics/SENTIMENT_ANALYSIS.md`
+
+## Security notes
+
+- No auth is enforced in this microservice. Restrict network access and front it with the main API gateway for authentication/authorization.
+
+## Version
+
+- API: 1.0.0 (see `analytics/main.py`)
