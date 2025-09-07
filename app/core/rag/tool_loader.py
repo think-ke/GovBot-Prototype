@@ -3,11 +3,6 @@ import os
 from typing import Dict, List, Any, Callable, Optional
 from app.utils.prompts import QUERY_ENGINE_PROMPT
 from llama_index.core import VectorStoreIndex, StorageContext, Settings
-import chromadb
-import os
-from typing import Dict, List, Any, Callable, Optional
-from app.utils.prompts import QUERY_ENGINE_PROMPT
-from llama_index.core import VectorStoreIndex, StorageContext, Settings
 from llama_index.vector_stores.chroma import ChromaVectorStore
 from llama_index.core.schema import NodeWithScore
 from chromadb.config import Settings as ChromaSettings

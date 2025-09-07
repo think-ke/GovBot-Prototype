@@ -63,6 +63,19 @@ logging.getLogger('sqlalchemy.engine').setLevel(logging.WARNING)
 # Database configuration
 from app.db.database import get_db, engine, async_session
 
+
+def _get_file_extension(filename: Optional[str]) -> str:
+    """Safely extract a file extension or return an empty string.
+
+    Avoids None access and inconsistent checks.
+    """
+    if not filename:
+        return ""
+    try:
+        return os.path.splitext(filename)[1] if "." in filename else ""
+    except Exception:
+        return ""
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup logic
@@ -222,7 +235,7 @@ async def upload_document(
     """
     try:
         # Generate a unique object name
-        file_extension = os.path.splitext(file.filename or "")[1] if file.filename and "." in file.filename else ""
+        file_extension = _get_file_extension(file.filename)
         object_name = f"{uuid.uuid4()}{file_extension}"
         
         # Read file content
@@ -455,7 +468,7 @@ async def update_document(
         if file is not None:
             import uuid, os
             safe_name = file.filename or ""
-            file_extension = os.path.splitext(safe_name)[1] if "." in safe_name else ""
+            file_extension = _get_file_extension(safe_name)
             new_object_name = f"{uuid.uuid4()}{file_extension}"
             # upload new
             content = await file.read()

@@ -153,7 +153,8 @@ class ChatPersistenceService:
             db.add(message)
             
             # Update the chat's updated_at timestamp
-            setattr(chat, "updated_at", datetime.now(timezone.utc))
+            # Use setattr to avoid strict SQLAlchemy typing complaints in some stubs
+            setattr(chat, "updated_at", datetime.now(timezone.utc))  # type: ignore[attr-defined]
             
             await db.commit()
             logger.info(f"Saved {message_type} message for chat session {session_id}")
@@ -319,7 +320,8 @@ class ChatPersistenceService:
                 db.add(chat_message)
             
             # Update the chat's updated_at timestamp
-            setattr(chat, "updated_at", datetime.now(timezone.utc))
+            # Use setattr to avoid strict SQLAlchemy typing complaints in some stubs
+            setattr(chat, "updated_at", datetime.now(timezone.utc))  # type: ignore[attr-defined]
             
             await db.commit()
             logger.info(f"Saved {len(messages_as_python)} messages for chat session {session_id}")

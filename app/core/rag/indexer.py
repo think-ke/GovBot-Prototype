@@ -208,6 +208,7 @@ async def get_collection_stats(
                     stats["indexed_count"] = index_stats.indexed_count or 0
                     stats["unindexed_count"] = index_stats.unindexed_count or 0
                     if (stats["indexed_count"] + stats["unindexed_count"]) > 0:
+                        # Percentage of webpages indexed in this collection
                         stats["indexing_progress"] = f"{(stats['indexed_count'] / (stats['indexed_count'] + stats['unindexed_count']) * 100):.1f}%"
             
             return stats
