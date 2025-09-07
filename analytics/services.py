@@ -1812,3 +1812,278 @@ class AnalyticsService:
             "median_words": float(row.get("median_words") or 0.0),
             "distribution": distribution,
         }
+
+    # ===== Per-user analytics =====
+    @staticmethod
+    async def get_user_top(
+        db: AsyncSession,
+        limit: int = 20,
+        start_date: Optional[datetime] = None,
+        end_date: Optional[datetime] = None,
+    ) -> List[Dict[str, Any]]:
+        """
+        Top users by sessions/messages within a window.
+        Returns [{user_id, sessions, messages}].
+        """
+        if not end_date:
+            end_date = datetime.utcnow()
+        if not start_date:
+            start_date = end_date - timedelta(days=30)
+
+        q = text(
+            """
+            SELECT c.user_id,
+                   COUNT(DISTINCT c.id)::INT AS sessions,
+                   COUNT(cm.id)::INT AS messages
+            FROM chats c
+            LEFT JOIN chat_messages cm
+                   ON cm.chat_id = c.id
+                  AND cm.timestamp BETWEEN :start_ts AND :end_ts
+            WHERE c.user_id IS NOT NULL
+              AND c.created_at BETWEEN :start_ts AND :end_ts
+            GROUP BY c.user_id
+            ORDER BY sessions DESC, messages DESC
+            LIMIT :limit
+            """
+        )
+        res = await db.execute(q, {"start_ts": start_date, "end_ts": end_date, "limit": limit})
+        return [
+            {"user_id": r[0], "sessions": int(r[1] or 0), "messages": int(r[2] or 0)}
+            for r in res.all()
+        ]
+
+    @staticmethod
+    async def get_user_metrics(
+        db: AsyncSession,
+        user_id: str,
+        start_date: Optional[datetime] = None,
+        end_date: Optional[datetime] = None,
+    ) -> Dict[str, Any]:
+        """
+        Per-user metrics: sessions, message counts, avg turns, avg TTFB/TTFA, no-answer rate,
+        RAG coverage, top collections, last active.
+        """
+        if not end_date:
+            end_date = datetime.utcnow()
+        if not start_date:
+            start_date = end_date - timedelta(days=30)
+
+        params = {"uid": user_id, "start_ts": start_date, "end_ts": end_date}
+
+        # Sessions
+        q_sessions = text(
+            """
+            SELECT COUNT(*)::INT
+            FROM chats
+            WHERE user_id = :uid AND created_at BETWEEN :start_ts AND :end_ts
+            """
+        )
+        sessions = int((await db.execute(q_sessions, params)).scalar() or 0)
+
+        # Messages by type
+        q_msgs = text(
+            """
+            SELECT
+              SUM(CASE WHEN cm.message_type = 'user' THEN 1 ELSE 0 END)::INT AS user_msgs,
+              SUM(CASE WHEN cm.message_type = 'assistant' THEN 1 ELSE 0 END)::INT AS assistant_msgs
+            FROM chat_messages cm
+            JOIN chats c ON c.id = cm.chat_id
+            WHERE c.user_id = :uid AND cm.timestamp BETWEEN :start_ts AND :end_ts
+            """
+        )
+        mrow = (await db.execute(q_msgs, params)).mappings().first() or {}
+        messages_user = int(mrow.get("user_msgs") or 0)
+        messages_assistant = int(mrow.get("assistant_msgs") or 0)
+
+        # Avg turns per chat
+        q_turns = text(
+            """
+            WITH per AS (
+                SELECT c.id, COUNT(cm.id)::INT AS cnt
+                FROM chats c
+                LEFT JOIN chat_messages cm ON cm.chat_id = c.id AND cm.timestamp BETWEEN :start_ts AND :end_ts
+                WHERE c.user_id = :uid AND c.created_at BETWEEN :start_ts AND :end_ts
+                GROUP BY c.id
+            )
+            SELECT AVG(cnt)::FLOAT FROM per
+            """
+        )
+        avg_turns_val = (await db.execute(q_turns, params)).scalar()
+        try:
+            avg_turns = float(avg_turns_val) if avg_turns_val is not None else 0.0
+        except (TypeError, ValueError):
+            avg_turns = 0.0
+
+        # Avg TTFB/TTFA from chat_events limited to the user's sessions
+        q_latency = text(
+            """
+            WITH sids AS (
+                SELECT session_id FROM chats WHERE user_id = :uid AND created_at BETWEEN :start_ts AND :end_ts
+            ), mr AS (
+                SELECT session_id, message_id, MIN(timestamp) AS mr_ts
+                FROM chat_events
+                WHERE event_type = 'message_received'
+                  AND session_id IN (SELECT session_id FROM sids)
+                  AND timestamp BETWEEN :start_ts AND :end_ts
+                GROUP BY session_id, message_id
+            ), at AS (
+                SELECT session_id, message_id,
+                       MIN(timestamp) AS at_start,
+                       MAX(timestamp) AS at_end
+                FROM chat_events
+                WHERE event_type = 'agent_thinking'
+                  AND session_id IN (SELECT session_id FROM sids)
+                  AND timestamp BETWEEN :start_ts AND :end_ts
+                GROUP BY session_id, message_id
+            ), rg AS (
+                SELECT session_id, message_id,
+                       MIN(timestamp) AS rg_start,
+                       MAX(timestamp) AS rg_end
+                FROM chat_events
+                WHERE event_type = 'response_generation'
+                  AND session_id IN (SELECT session_id FROM sids)
+                  AND timestamp BETWEEN :start_ts AND :end_ts
+                GROUP BY session_id, message_id
+            ), joined AS (
+                SELECT mr.session_id, mr.message_id,
+                       EXTRACT(EPOCH FROM (at.at_start - mr.mr_ts)) * 1000 AS ttfb_ms,
+                       EXTRACT(EPOCH FROM (COALESCE(rg.rg_end, at.at_end) - mr.mr_ts)) * 1000 AS ttfa_ms
+                FROM mr
+                LEFT JOIN at ON at.session_id = mr.session_id AND at.message_id = mr.message_id
+                LEFT JOIN rg ON rg.session_id = mr.session_id AND rg.message_id = mr.message_id
+            )
+            SELECT AVG(ttfb_ms)::FLOAT AS avg_ttfb_ms,
+                   AVG(ttfa_ms)::FLOAT AS avg_ttfa_ms
+            FROM joined
+            WHERE ttfb_ms IS NOT NULL AND ttfa_ms IS NOT NULL
+            """
+        )
+        lat = (await db.execute(q_latency, params)).mappings().first() or {}
+        avg_ttfb_ms = float(lat.get("avg_ttfb_ms") or 0.0)
+        avg_ttfa_ms = float(lat.get("avg_ttfa_ms") or 0.0)
+
+        # No-answer rate for user's assistant messages
+        q_noans = text(
+            """
+            WITH msgs AS (
+                SELECT cm.id,
+                       COALESCE(cm.message_object->>'content','') AS content
+                FROM chat_messages cm
+                JOIN chats c ON c.id = cm.chat_id
+                WHERE c.user_id = :uid
+                  AND cm.message_type = 'assistant'
+                  AND cm.timestamp BETWEEN :start_ts AND :end_ts
+            )
+            SELECT
+              COUNT(*)::INT AS total,
+              SUM(
+                CASE WHEN (
+                    content ILIKE '%sorry%'
+                    OR content ILIKE '%do not have%'
+                    OR content ILIKE '%don''t have%'
+                    OR content ILIKE '%unable to find%'
+                    OR content ILIKE '%no relevant results%'
+                    OR content ILIKE '%cannot answer%'
+                    OR content ILIKE '%not sure%'
+                ) THEN 1 ELSE 0 END
+              )::INT AS noans
+            FROM msgs
+            """
+        )
+        nr = (await db.execute(q_noans, params)).mappings().first() or {}
+        total_asst = int(nr.get("total") or 0)
+        noans_cnt = int(nr.get("noans") or 0)
+        no_answer_rate = round((noans_cnt / total_asst) * 100.0, 2) if total_asst > 0 else 0.0
+
+        # RAG coverage and top collections from assistant message sources
+        q_citations = text(
+            """
+            WITH am AS (
+                SELECT cm.id, cm.message_object
+                FROM chat_messages cm
+                JOIN chats c ON c.id = cm.chat_id
+                WHERE c.user_id = :uid
+                  AND cm.message_type = 'assistant'
+                  AND cm.timestamp BETWEEN :start_ts AND :end_ts
+            )
+            SELECT
+                COUNT(*)::INT AS total_answers,
+                SUM(CASE WHEN COALESCE(json_array_length(message_object->'sources'),0) > 0 THEN 1 ELSE 0 END)::INT AS covered_answers
+            FROM am
+            """
+        )
+        cit = (await db.execute(q_citations, params)).mappings().first() or {}
+        total_answers = int(cit.get("total_answers") or 0)
+        covered_answers = int(cit.get("covered_answers") or 0)
+        rag_coverage_pct = round((covered_answers / total_answers) * 100.0, 2) if total_answers > 0 else 0.0
+
+        q_top_cols = text(
+            """
+            WITH am AS (
+                SELECT cm.id, cm.message_object
+                FROM chat_messages cm
+                JOIN chats c ON c.id = cm.chat_id
+                WHERE c.user_id = :uid
+                  AND cm.message_type = 'assistant'
+                  AND cm.timestamp BETWEEN :start_ts AND :end_ts
+            ), src AS (
+                SELECT COALESCE(
+                           elem->>'collection',
+                           elem->>'collection_id',
+                           (elem->'metadata')->>'collection',
+                           (elem->'metadata')->>'collection_id'
+                       ) AS collection_id
+                FROM am,
+                     LATERAL json_array_elements(COALESCE(am.message_object->'sources','[]'::json)) AS elem
+            )
+            SELECT collection_id, COUNT(*) AS c
+            FROM src
+            WHERE collection_id IS NOT NULL AND collection_id <> ''
+            GROUP BY collection_id
+            ORDER BY c DESC
+            LIMIT 5
+            """
+        )
+        rows = (await db.execute(q_top_cols, params)).all()
+        top_collections = [r[0] for r in rows if r[0]]
+
+        # Fallback to tool events if no sources
+        if not top_collections:
+            q_fallback = text(
+                """
+                WITH sids AS (
+                    SELECT session_id FROM chats WHERE user_id = :uid AND created_at BETWEEN :start_ts AND :end_ts
+                )
+                SELECT NULLIF(event_data->>'collection','') AS collection_id, COUNT(*) AS c
+                FROM chat_events
+                WHERE event_type = 'tool_search_documents'
+                  AND session_id IN (SELECT session_id FROM sids)
+                  AND timestamp BETWEEN :start_ts AND :end_ts
+                GROUP BY NULLIF(event_data->>'collection','')
+                ORDER BY c DESC NULLS LAST
+                LIMIT 5
+                """
+            )
+            frows = (await db.execute(q_fallback, params)).all()
+            top_collections = [r[0] for r in frows if r[0]]
+
+        # Last active
+        q_last = text(
+            """
+            SELECT MAX(updated_at) FROM chats WHERE user_id = :uid AND updated_at IS NOT NULL
+            """
+        )
+        last_active = (await db.execute(q_last, {"uid": user_id})).scalar()
+
+        return {
+            "sessions": sessions,
+            "messages_user": messages_user,
+            "messages_assistant": messages_assistant,
+            "avg_turns": round(avg_turns, 2),
+            "avg_ttfb_ms": avg_ttfb_ms,
+            "avg_ttfa_ms": avg_ttfa_ms,
+            "no_answer_rate": no_answer_rate,
+            "rag_coverage_pct": rag_coverage_pct,
+            "top_collections": top_collections,
+            "last_active": last_active,
+        }
