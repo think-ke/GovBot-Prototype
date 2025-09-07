@@ -7,12 +7,16 @@ OpenAPI schema with detailed tags, examples, and helpful tooltips so the
 admin dashboard can surface better in-UI help.
 """
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Depends
 from fastapi.middleware.cors import CORSMiddleware
 import logging
 from pydantic import BaseModel, Field, ConfigDict
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import text
+from time import perf_counter
 
 from analytics.routers import user_analytics, usage_analytics, conversation_analytics, business_analytics
+from analytics.database import get_db
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -209,6 +213,37 @@ async def root() -> RootResponse:
             business="/analytics/business",
         ),
     )
+
+class DBHealthResponse(BaseModel):
+    """Schema for database connectivity health."""
+
+    model_config = ConfigDict(
+        title="DBHealthResponse",
+        json_schema_extra={
+            "examples": [
+                {
+                    "status": "ok",
+                    "latency_ms": 2.3,
+                }
+            ]
+        },
+    )
+
+    status: str = Field(..., description="'ok' when DB ping succeeds, else 'error'")
+    latency_ms: float = Field(..., description="Round-trip time for SELECT 1 in milliseconds")
+
+
+@app.get(
+    "/analytics/health/db",
+    response_model=DBHealthResponse,
+    summary="Database connectivity health",
+    description="Executes SELECT 1 to verify DB connectivity and reports latency (ms).",
+)
+async def db_health(db: AsyncSession = Depends(get_db)) -> DBHealthResponse:
+    start = perf_counter()
+    await db.execute(text("SELECT 1"))
+    latency = (perf_counter() - start) * 1000.0
+    return DBHealthResponse(status="ok", latency_ms=round(latency, 3))
 
 if __name__ == "__main__":
     import uvicorn

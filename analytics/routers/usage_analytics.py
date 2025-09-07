@@ -8,7 +8,7 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..database import get_db
-from ..schemas import TrafficMetrics, SessionDuration, SystemHealth, PeakHoursResponse, ErrorAnalysis, HourlyTrafficPoint, ResponseTimesPoint, CapacityMetrics
+from ..schemas import TrafficMetrics, SessionDuration, SystemHealth, PeakHoursResponse, ErrorAnalysis, HourlyTrafficPoint, ResponseTimesPoint, CapacityMetrics, LatencyStats, ToolUsageResponse
 from ..services import AnalyticsService
 
 router = APIRouter()
@@ -169,3 +169,17 @@ async def get_error_analysis(
         },
         analysis_period=f"{hours} hours",
     )
+
+@router.get("/latency", response_model=LatencyStats, summary="Latency percentiles", description="Percentiles for time-to-first-byte (TTFB) and time-to-full-answer (TTFA) using chat events.")
+async def get_latency(
+    db: AsyncSession = Depends(get_db)
+):
+    stats = await AnalyticsService.get_latency_stats(db)
+    return LatencyStats(**stats)
+
+@router.get("/tool-usage", response_model=ToolUsageResponse, summary="RAG tool usage", description="Aggregates tool_search_documents events into started/completed/failed counts and average retrieved documents.")
+async def get_tool_usage(
+    db: AsyncSession = Depends(get_db)
+):
+    data = await AnalyticsService.get_tool_usage(db)
+    return ToolUsageResponse(**data)

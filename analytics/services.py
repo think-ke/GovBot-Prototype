@@ -718,3 +718,158 @@ class AnalyticsService:
             
         except (ZeroDivisionError, ValueError):
             return None
+
+    # ===== New methods =====
+    @staticmethod
+    async def get_latency_stats(db: AsyncSession) -> Dict[str, Any]:
+        """
+        Compute latency percentiles using chat_events.
+        Assumptions:
+        - event_type 'message_received' marks user input arrival
+        - 'agent_thinking' marks LLM thinking; first occurrence ~ start, last occurrence ~ end
+        - 'response_generation' marks answer emission; last occurrence approximates end of answer
+        Returns dict matching LatencyStats.
+        """
+        q = text(
+            """
+            WITH mr AS (
+                SELECT session_id, message_id, MIN(timestamp) AS mr_ts
+                FROM chat_events
+                WHERE event_type = 'message_received'
+                GROUP BY session_id, message_id
+            ), at AS (
+                SELECT session_id, message_id,
+                       MIN(timestamp) AS at_start,
+                       MAX(timestamp) AS at_end
+                FROM chat_events
+                WHERE event_type = 'agent_thinking'
+                GROUP BY session_id, message_id
+            ), rg AS (
+                SELECT session_id, message_id,
+                       MIN(timestamp) AS rg_start,
+                       MAX(timestamp) AS rg_end
+                FROM chat_events
+                WHERE event_type = 'response_generation'
+                GROUP BY session_id, message_id
+            ), joined AS (
+                SELECT mr.session_id, mr.message_id,
+                       EXTRACT(EPOCH FROM (at.at_start - mr.mr_ts)) * 1000 AS ttfb_ms,
+                       EXTRACT(EPOCH FROM (COALESCE(rg.rg_end, at.at_end) - mr.mr_ts)) * 1000 AS ttfa_ms
+                FROM mr
+                LEFT JOIN at ON at.session_id = mr.session_id AND at.message_id = mr.message_id
+                LEFT JOIN rg ON rg.session_id = mr.session_id AND rg.message_id = mr.message_id
+            )
+            SELECT
+                PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY ttfb_ms) AS p50_ttfb_ms,
+                PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY ttfb_ms) AS p95_ttfb_ms,
+                PERCENTILE_CONT(0.99) WITHIN GROUP (ORDER BY ttfb_ms) AS p99_ttfb_ms,
+                PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY ttfa_ms) AS p50_ttfa_ms,
+                PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY ttfa_ms) AS p95_ttfa_ms,
+                PERCENTILE_CONT(0.99) WITHIN GROUP (ORDER BY ttfa_ms) AS p99_ttfa_ms,
+                COUNT(*)::INT AS samples
+            FROM joined
+            WHERE ttfb_ms IS NOT NULL AND ttfa_ms IS NOT NULL
+            """
+        )
+        res = await db.execute(q)
+        row = res.mappings().first()
+        if not row:
+            return {
+                "p50_ttfb_ms": 0.0,
+                "p95_ttfb_ms": 0.0,
+                "p99_ttfb_ms": 0.0,
+                "p50_ttfa_ms": 0.0,
+                "p95_ttfa_ms": 0.0,
+                "p99_ttfa_ms": 0.0,
+                "samples": 0,
+            }
+        return {
+            "p50_ttfb_ms": float(row.get("p50_ttfb_ms") or 0),
+            "p95_ttfb_ms": float(row.get("p95_ttfb_ms") or 0),
+            "p99_ttfb_ms": float(row.get("p99_ttfb_ms") or 0),
+            "p50_ttfa_ms": float(row.get("p50_ttfa_ms") or 0),
+            "p95_ttfa_ms": float(row.get("p95_ttfa_ms") or 0),
+            "p99_ttfa_ms": float(row.get("p99_ttfa_ms") or 0),
+            "samples": int(row.get("samples") or 0),
+        }
+
+    @staticmethod
+    async def get_tool_usage(db: AsyncSession) -> Dict[str, Any]:
+        """
+        Aggregate tool usage for RAG searches from chat_events.
+        Counts 'started'/'completed'/'failed' for event_type = 'tool_search_documents'.
+        Derives avg_retrieved from event_data.count for completed events.
+        Returns overall and by_collection breakdown.
+        """
+        overall_q = text(
+            """
+            SELECT
+                SUM(CASE WHEN event_status = 'started' THEN 1 ELSE 0 END)::INT AS started,
+                SUM(CASE WHEN event_status = 'completed' THEN 1 ELSE 0 END)::INT AS completed,
+                SUM(CASE WHEN event_status = 'failed' THEN 1 ELSE 0 END)::INT AS failed,
+                AVG(
+                    CASE WHEN event_status = 'completed' AND (event_data->>'count') ~ '^[0-9]+'
+                         THEN (event_data->>'count')::INT
+                    END
+                ) AS avg_retrieved
+            FROM chat_events
+            WHERE event_type = 'tool_search_documents'
+            """
+        )
+        res_overall = await db.execute(overall_q)
+        o = res_overall.mappings().first() or {}
+        avg_overall: Optional[float] = None
+        if o.get("avg_retrieved") is not None:
+            try:
+                val_overall = o.get("avg_retrieved")
+                # Ensure not None and convertible
+                if val_overall is not None:
+                    avg_overall = float(val_overall)  # type: ignore[arg-type]
+            except (TypeError, ValueError):
+                avg_overall = None
+        overall = {
+            "collection_id": None,
+            "started": int(o.get("started") or 0),
+            "completed": int(o.get("completed") or 0),
+            "failed": int(o.get("failed") or 0),
+            "avg_retrieved": avg_overall,
+        }
+
+        by_coll_q = text(
+            """
+            SELECT
+                NULLIF(event_data->>'collection', '') AS collection_id,
+                SUM(CASE WHEN event_status = 'started' THEN 1 ELSE 0 END)::INT AS started,
+                SUM(CASE WHEN event_status = 'completed' THEN 1 ELSE 0 END)::INT AS completed,
+                SUM(CASE WHEN event_status = 'failed' THEN 1 ELSE 0 END)::INT AS failed,
+                AVG(
+                    CASE WHEN event_status = 'completed' AND (event_data->>'count') ~ '^[0-9]+'
+                         THEN (event_data->>'count')::INT
+                    END
+                ) AS avg_retrieved
+            FROM chat_events
+            WHERE event_type = 'tool_search_documents'
+            GROUP BY NULLIF(event_data->>'collection', '')
+            ORDER BY completed DESC NULLS LAST, started DESC
+            """
+        )
+        res_by = await db.execute(by_coll_q)
+        by_collection = []
+        for row in res_by.mappings().all():
+            avg_val: Optional[float] = None
+            if row.get("avg_retrieved") is not None:
+                try:
+                    v = row.get("avg_retrieved")
+                    if v is not None:
+                        avg_val = float(v)  # type: ignore[arg-type]
+                except (TypeError, ValueError):
+                    avg_val = None
+            by_collection.append({
+                "collection_id": row.get("collection_id"),
+                "started": int(row.get("started") or 0),
+                "completed": int(row.get("completed") or 0),
+                "failed": int(row.get("failed") or 0),
+                "avg_retrieved": avg_val,
+            })
+
+        return {"overall": overall, "by_collection": by_collection}

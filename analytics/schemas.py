@@ -300,3 +300,151 @@ class CapacityMetrics(BaseModel):
     concurrent_sessions: int
     scaling_status: str
     recommendations: List[str]
+
+# ===== Additional Schemas for New Metrics (per requirements.md) =====
+
+class LatencyStats(BaseModel):
+    model_config = ConfigDict(json_schema_extra={
+        "examples": [{
+            "p50_ttfb_ms": 180.0, "p95_ttfb_ms": 520.0, "p99_ttfb_ms": 950.0,
+            "p50_ttfa_ms": 650.0, "p95_ttfa_ms": 1800.0, "p99_ttfa_ms": 3200.0,
+            "samples": 2750
+        }],
+        "x-tooltip": "TTFB = first token; TTFA = full answer. Milliseconds.",
+    })
+    p50_ttfb_ms: float
+    p95_ttfb_ms: float
+    p99_ttfb_ms: float
+    p50_ttfa_ms: float
+    p95_ttfa_ms: float
+    p99_ttfa_ms: float
+    samples: int
+
+class ToolUsageItem(BaseModel):
+    collection_id: Optional[str] = None
+    started: int
+    completed: int
+    failed: int
+    avg_retrieved: Optional[float] = None
+
+class ToolUsageResponse(BaseModel):
+    overall: ToolUsageItem
+    by_collection: List[ToolUsageItem]
+
+class CollectionWebpagesHealth(BaseModel):
+    pages: int
+    ok: int
+    redirects: int
+    client_err: int
+    server_err: int
+    indexed: int
+
+class CollectionDocumentsHealth(BaseModel):
+    count: int
+    indexed: int
+    public: int
+    total_size: int
+
+class CollectionFreshness(BaseModel):
+    last_indexed_at: Optional[datetime] = None
+
+class CollectionHealthItem(BaseModel):
+    model_config = ConfigDict(json_schema_extra={
+        "examples": [{
+            "collection_id": "odpc",
+            "webpages": {"pages": 75, "ok": 69, "redirects": 0, "client_err": 5, "server_err": 0, "indexed": 74},
+            "documents": {"count": 1, "indexed": 1, "public": 0, "total_size": 457026},
+            "freshness": {"last_indexed_at": "2025-05-22T15:56:26.530Z"}
+        }]
+    })
+    collection_id: Optional[str] = None
+    webpages: CollectionWebpagesHealth
+    documents: CollectionDocumentsHealth
+    freshness: CollectionFreshness
+
+class NoAnswerExample(BaseModel):
+    chat_id: Optional[int] = None
+    message_id: Optional[str] = None
+    snippet: str
+
+class NoAnswerStats(BaseModel):
+    model_config = ConfigDict(json_schema_extra={
+        "examples": [{
+            "rate": 6.2,
+            "examples": [{"chat_id": 3574, "message_id": "abc-123", "snippet": "I'm sorry, but I don't have that information."}],
+            "top_triggers": ["missing_policy", "unsupported_service"]
+        }]
+    })
+    rate: float  # percentage 0-100
+    examples: List[NoAnswerExample]
+    top_triggers: List[str]
+
+class CollectionCitationStats(BaseModel):
+    collection_id: Optional[str] = None
+    coverage_pct: float
+    avg_citations: float
+
+class CitationStats(BaseModel):
+    model_config = ConfigDict(json_schema_extra={
+        "examples": [{
+            "coverage_pct": 72.4,
+            "avg_citations": 2.1,
+            "by_collection": [
+                {"collection_id": "odpc", "coverage_pct": 80.0, "avg_citations": 2.3}
+            ]
+        }]
+    })
+    coverage_pct: float
+    avg_citations: float
+    by_collection: List[CollectionCitationStats]
+
+class AnswerLengthBucket(BaseModel):
+    bucket: str
+    count: int
+    percentage: float
+
+class AnswerLengthStats(BaseModel):
+    model_config = ConfigDict(json_schema_extra={
+        "examples": [{
+            "avg_words": 85.3,
+            "median_words": 72.0,
+            "distribution": [
+                {"bucket": "0-20", "count": 15, "percentage": 3.2},
+                {"bucket": "21-50", "count": 120, "percentage": 25.0}
+            ]
+        }]
+    })
+    avg_words: float
+    median_words: float
+    distribution: List[AnswerLengthBucket]
+
+class UserTopItem(BaseModel):
+    user_id: str
+    sessions: int
+    messages: int
+
+class UserMetrics(BaseModel):
+    model_config = ConfigDict(json_schema_extra={
+        "examples": [{
+            "sessions": 12,
+            "messages_user": 48,
+            "messages_assistant": 41,
+            "avg_turns": 7.4,
+            "avg_ttfb_ms": 210.0,
+            "avg_ttfa_ms": 1550.0,
+            "no_answer_rate": 4.8,
+            "rag_coverage_pct": 70.2,
+            "top_collections": ["odpc", "kfcb"],
+            "last_active": "2025-08-22T08:36:58.387Z"
+        }]
+    })
+    sessions: int
+    messages_user: int
+    messages_assistant: int
+    avg_turns: float
+    avg_ttfb_ms: Optional[float] = None
+    avg_ttfa_ms: Optional[float] = None
+    no_answer_rate: float
+    rag_coverage_pct: float
+    top_collections: List[str]
+    last_active: Optional[datetime] = None
