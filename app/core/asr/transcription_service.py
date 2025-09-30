@@ -8,7 +8,7 @@ import logging
 import os
 from datetime import datetime, timezone
 from io import BytesIO
-from typing import Any, Dict, List, Optional, Tuple, cast
+from typing import Any, Dict, Optional, Tuple, cast
 
 from dotenv import load_dotenv
 from groq import Groq
@@ -36,8 +36,6 @@ SUPPORTED_AUDIO_CONTENT_TYPES = {
     "audio/x-aac",
 }
 
-VALID_RESPONSE_FORMATS = {"json", "verbose_json", "text"}
-VALID_TIMESTAMP_GRANULARITIES = {"word", "segment"}
 DEFAULT_RESPONSE_FORMAT = "verbose_json"
 DEFAULT_TEMPERATURE = 0.0
 MAX_FILE_BYTES = int(os.getenv("GROQ_STT_MAX_FILE_BYTES", str(100 * 1024 * 1024)))
@@ -78,11 +76,6 @@ class GroqTranscriptionService:
         api_key_name: Optional[str],
         metadata: Optional[Dict[str, Any]] = None,
         model: Optional[str] = None,
-        language: Optional[str] = None,
-        prompt: Optional[str] = None,
-        temperature: Optional[float] = None,
-        response_format: Optional[str] = None,
-        timestamp_granularities: Optional[List[str]] = None,
     ) -> Transcription:
         """Transcribe an uploaded file and persist the result."""
 
@@ -94,30 +87,6 @@ class GroqTranscriptionService:
             raise TranscriptionError(
                 f"Audio file exceeds maximum supported size of {MAX_FILE_BYTES // (1024 * 1024)} MB"
             )
-
-        temperature_value = temperature if temperature is not None else DEFAULT_TEMPERATURE
-        if not 0.0 <= temperature_value <= 1.0:
-            raise TranscriptionError("Temperature must be between 0 and 1 inclusive")
-
-        response_format_value = (response_format or DEFAULT_RESPONSE_FORMAT).lower()
-        if response_format_value not in VALID_RESPONSE_FORMATS:
-            raise TranscriptionError(
-                f"Unsupported response_format '{response_format_value}'. Valid values: {', '.join(sorted(VALID_RESPONSE_FORMATS))}"
-            )
-
-        normalized_granularities: Optional[List[str]] = None
-        if timestamp_granularities:
-            candidate = [item.lower() for item in timestamp_granularities]
-            invalid = [item for item in candidate if item not in VALID_TIMESTAMP_GRANULARITIES]
-            if invalid:
-                raise TranscriptionError(
-                    f"Unsupported timestamp granularities: {', '.join(invalid)}. Allowed values: word, segment"
-                )
-            if response_format_value not in {"json", "verbose_json"}:
-                raise TranscriptionError(
-                    "timestamp_granularities requires response_format to be 'json' or 'verbose_json'"
-                )
-            normalized_granularities = candidate
 
         safe_filename = os.path.basename(filename) if filename else "audio"
 
@@ -139,11 +108,6 @@ class GroqTranscriptionService:
             requested_by=requested_by,
             api_key_name=api_key_name,
             meta_data=sanitized_metadata,
-            language=language,
-            prompt=prompt,
-            temperature=temperature_value,
-            response_format=response_format_value,
-            timestamp_granularities=normalized_granularities,
         )
 
         await self._persist(session, transcription)
@@ -172,11 +136,6 @@ class GroqTranscriptionService:
                 data=file_bytes,
                 filename=safe_filename,
                 model=model or self.default_model,
-                language=language,
-                prompt=prompt,
-                temperature=temperature_value,
-                response_format=response_format_value,
-                timestamp_granularities=normalized_granularities,
             )
             logger.debug("Groq transcription response for %s: %s", transcription.request_id, raw_response)
         except Exception as exc:  # pragma: no cover - network errors hard to replicate in tests
@@ -215,11 +174,6 @@ class GroqTranscriptionService:
         data: bytes,
         filename: str,
         model: str,
-        language: Optional[str],
-        prompt: Optional[str],
-        temperature: float,
-        response_format: str,
-        timestamp_granularities: Optional[List[str]],
     ) -> Tuple[Dict[str, Any], Dict[str, Any]]:
         """Call Groq Whisper API in a thread and normalize the response."""
 
@@ -227,15 +181,9 @@ class GroqTranscriptionService:
             kwargs: Dict[str, Any] = {
                 "file": (filename, data),
                 "model": model,
-                "response_format": response_format,
-                "temperature": temperature,
+                "response_format": DEFAULT_RESPONSE_FORMAT,
+                "temperature": DEFAULT_TEMPERATURE,
             }
-            if language:
-                kwargs["language"] = language
-            if prompt:
-                kwargs["prompt"] = prompt
-            if timestamp_granularities:
-                kwargs["timestamp_granularities"] = timestamp_granularities
             return self.client.audio.transcriptions.create(**kwargs)
 
         response = await asyncio.to_thread(_call)
