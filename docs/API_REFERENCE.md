@@ -6,20 +6,31 @@ All API endpoints (except `/` and `/health`) require authentication via the `X-A
 
 ```http
 X-API-Key: your-api-key-here
+## Transcription API
+
+GovStack exposes Groq Whisper-based speech-to-text functionality via `/transcriptions` endpoints. The service uses the [Groq Speech-to-Text API](https://console.groq.com/docs/speech-to-text) and currently defaults to the `whisper-large-v3-turbo` model for fast multilingual transcription.
+
+### Create Transcription Job
+
+```http
+POST /transcriptions/
+Content-Type: multipart/form-data
+X-API-Key: your-api-key-here
 ```
 
-### Permission Levels
+**Required permission:** `write`
 
-| Permission | Description | Endpoints |
+**Form fields:**
+- `file` *(required)* – audio file upload. Supported types: `flac`, `mp3`, `mp4`, `mpeg`, `mpga`, `m4a`, `ogg`, `wav`, `webm`.
+- `model` *(optional)* – Groq Whisper model ID. Defaults to `whisper-large-v3-turbo`.
+- `metadata` *(optional)* – JSON string saved alongside the transcription record.
+
+### Permission Levels
 |------------|-------------|-----------|
 | `read` | View data and chat history | GET endpoints, chat history |
 | `write` | Create and modify data | POST endpoints, document upload, chat |
 | `delete` | Remove data | DELETE endpoints |
 
-### API Keys
-
-Configure in your environment:
-- `GOVSTACK_API_KEY`: Master key (read, write, delete)
 - `GOVSTACK_ADMIN_API_KEY`: Admin key (read, write)
 
 ## Core Endpoints
@@ -42,13 +53,6 @@ GET /health
 
 ### API Information
 
-Get information about your API key and permissions.
-
-```http
-GET /api-info
-X-API-Key: your-api-key-here
-```
-
 **Response:**
 ```json
 {
@@ -68,9 +72,6 @@ Process a chat message and get an AI response.
 POST /chat/
 Content-Type: application/json
 X-API-Key: your-api-key-here
-```
-
-**Request Body:**
 ```json
 {
   "message": "What services does the government provide for business registration?",
@@ -87,14 +88,6 @@ X-API-Key: your-api-key-here
 
 Chat with a specific agency/collection assistant.
 
-```http
-POST /chat/{agency}
-Content-Type: application/json
-X-API-Key: your-api-key-here
-```
-
-**Path Parameters:**
-- `agency`: Agency identifier - can be:
   - Legacy alias (`kfc`, `kfcb`, `brs`, `odpc`)
   - Collection name (`Kenya Film Commission`)
   - Canonical UUID (`3fa85f64-5717-4562-b3fc-2c963f66afa6`)
@@ -104,12 +97,6 @@ X-API-Key: your-api-key-here
 **Response:** Same as `/chat/` but scoped to specific agency's knowledge base
 
 **Side Effects:**
-- Uses only documents/webpages from the specified collection
-- Tools are dynamically generated from available collections
-- Collection changes auto-refresh available tools
-```
-
-**Required Permission:** `write`
 
 **Response:**
 ```json
@@ -123,10 +110,6 @@ X-API-Key: your-api-key-here
       "snippet": "The Business Registration Service (BRS) is a state corporation..."
     }
   ],
-  "confidence": 0.92,
-  "retriever_type": "brs",
-  "trace_id": "7fa85f64-5717-4562-b3fc-2c963f66afa7",
-  "recommended_follow_up_questions": [
     "What are the fees for business registration?",
     "How long does the business registration process take?"
   ],
@@ -138,8 +121,6 @@ X-API-Key: your-api-key-here
     "details": {
       "accepted_prediction_tokens": 0,
       "audio_tokens": 0,
-      "reasoning_tokens": 0,
-      "rejected_prediction_tokens": 0,
       "cached_tokens": 0
     }
   }
@@ -151,8 +132,6 @@ X-API-Key: your-api-key-here
 Retrieve the conversation history for a session.
 
 ```http
-GET /chat/{session_id}
-X-API-Key: your-api-key-here
 ```
 
 **Response:**
@@ -162,10 +141,6 @@ X-API-Key: your-api-key-here
   "messages": [
     {
       "id": 1,
-      "message_id": "msg1",
-      "message_type": "user",
-      "message_object": {
-        "query": "What services does the government provide?"
       },
       "timestamp": "2023-10-20T14:30:15.123456"
     },
@@ -173,22 +148,16 @@ X-API-Key: your-api-key-here
       "id": 2,
       "message_id": "msg2",
       "message_type": "assistant",
-      "message_object": {
-        "answer": "The government provides various services...",
-        "sources": [...],
-        "confidence": 0.92
       },
       "timestamp": "2023-10-20T14:30:18.654321"
     }
   ],
-  "user_id": "user123",
   "created_at": "2023-10-20T14:30:15.123456",
   "updated_at": "2023-10-20T14:30:18.654321",
   "message_count": 2,
   "num_messages": 2
 }
 ```
-
 ### Delete Chat Session
 
 Remove a chat session and all its messages.

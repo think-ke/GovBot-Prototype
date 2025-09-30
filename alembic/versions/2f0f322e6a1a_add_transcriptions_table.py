@@ -39,6 +39,10 @@ def upgrade():
         sa.Column('requested_by', sa.String(length=100), nullable=True),
         sa.Column('api_key_name', sa.String(length=100), nullable=True),
         sa.Column('meta_data', sa.JSON(), nullable=True),
+        sa.Column('prompt', sa.Text(), nullable=True),
+        sa.Column('temperature', sa.Float(), nullable=True),
+        sa.Column('response_format', sa.String(length=32), nullable=True),
+        sa.Column('timestamp_granularities', sa.JSON(), nullable=True),
         sa.Column('created_at', sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
         sa.Column(
             'updated_at',

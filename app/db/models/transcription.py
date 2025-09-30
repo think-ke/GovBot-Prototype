@@ -52,6 +52,10 @@ class Transcription(Base):
     requested_by = Column(String(100), nullable=True, index=True)
     api_key_name = Column(String(100), nullable=True, index=True)
     meta_data = Column(JSON, nullable=True)
+    prompt = Column(Text, nullable=True)
+    temperature = Column(Float, nullable=True)
+    response_format = Column(String(32), nullable=True)
+    timestamp_granularities = Column(JSON, nullable=True)
     created_at = Column(
         DateTime(timezone=True),
         default=lambda: datetime.now(timezone.utc),
@@ -93,6 +97,10 @@ class Transcription(Base):
             "requested_by": self.requested_by,
             "api_key_name": self.api_key_name,
             "metadata": self.meta_data,
+            "prompt": self.prompt,
+            "temperature": self.temperature,
+            "response_format": self.response_format,
+            "timestamp_granularities": self.timestamp_granularities,
             "created_at": created_at,
             "updated_at": updated_at,
             "completed_at": completed_at,

@@ -62,6 +62,10 @@ class TranscriptionResponse(BaseModel):
     requested_by: Optional[str] = None
     api_key_name: Optional[str] = None
     metadata: Optional[Dict[str, Any]] = None
+    prompt: Optional[str] = None
+    temperature: Optional[float] = None
+    response_format: Optional[str] = None
+    timestamp_granularities: Optional[List[str]] = None
     created_at: Optional[str] = None
     updated_at: Optional[str] = None
     completed_at: Optional[str] = None
