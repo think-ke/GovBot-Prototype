@@ -140,12 +140,29 @@ app.openapi_components = {
 app.openapi_security = [{"ApiKeyAuth": []}]
 
 # Configure CORS
+# Note: When allow_credentials=True, browsers do not allow wildcard "*" for Access-Control-Allow-Origin.
+# Use explicit origins via CORS_ALLOW_ORIGINS env (comma-separated) or sensible defaults for dev + production dashboards.
+cors_env = os.getenv("CORS_ALLOW_ORIGINS", "")
+if cors_env.strip():
+    allowed_origins = [o.strip() for o in cors_env.split(",") if o.strip()]
+else:
+    allowed_origins = [
+        # Local dev
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+        "http://localhost:5173",
+        "http://127.0.0.1:5173",
+        # Production dashboards
+        "https://govstack-dashboard.vercel.app",
+    ]
+
+# Allow CORS from all origins while supporting credentials by echoing the Origin header (regex match)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Set to specific origins in production
+    allow_origin_regex=".*",
     allow_credentials=True,
     allow_methods=["*"],
-    allow_headers=["*"],
+    allow_headers=["*"]
 )
 
 logfire.instrument_fastapi(app, capture_headers=True)
@@ -1723,6 +1740,9 @@ app.include_router(rating_router, prefix="/chat", tags=["Chat"])
 # Import the audit endpoints router
 from app.api.endpoints.audit_endpoints import router as audit_router
 app.include_router(audit_router, prefix="/admin", tags=["Audit"])
+# Import the transcription endpoints router
+from app.api.endpoints.transcription_endpoints import router as transcription_router
+app.include_router(transcription_router)
 app.include_router(document_router)
 app.include_router(crawler_router)
 app.include_router(webpage_router)

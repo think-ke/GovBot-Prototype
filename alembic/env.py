@@ -33,6 +33,7 @@ from app.db.models.chat import Base as ChatBase
 from app.db.models.chat_event import Base as ChatEventBase
 from app.db.models.message_rating import Base as MessageRatingBase
 from app.db.models.audit_log import Base as AuditBase
+from app.db.models.transcription import Base as TranscriptionBase
 # Import Collection model to register its table on the shared Base metadata
 from app.db.models.collection import Collection  # noqa: F401
 
@@ -44,6 +45,7 @@ _metadata_candidates: List = [
     ChatEventBase.metadata,
     MessageRatingBase.metadata,
     AuditBase.metadata,
+    TranscriptionBase.metadata,
 ]
 target_metadata_list: List = []
 for md in _metadata_candidates:
@@ -82,7 +84,7 @@ def run_migrations_online() -> None:
     """Run migrations in 'online' mode."""
 
     connectable = engine_from_config(
-        config.get_section(config.config_ini_section),
+        config.get_section(config.config_ini_section),  # type: ignore[arg-type]
         prefix="sqlalchemy.",
         poolclass=pool.NullPool,
     )

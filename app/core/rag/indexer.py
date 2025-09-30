@@ -251,13 +251,16 @@ async def _check_column_exists(db: AsyncSession, table_name: str, column_name: s
     """
     try:
         # Execute raw SQL to check if the column exists
-        query = """
-        SELECT EXISTS (
-            SELECT 1
-            FROM information_schema.columns
-            WHERE table_name = :table_name AND column_name = :column_name
-        );
-        """
+        from sqlalchemy import text
+        query = text(
+            """
+            SELECT EXISTS (
+                SELECT 1
+                FROM information_schema.columns
+                WHERE table_name = :table_name AND column_name = :column_name
+            );
+            """
+        )
         result = await db.execute(query, {"table_name": table_name, "column_name": column_name})
         exists = result.scalar()
         return exists

@@ -24,6 +24,10 @@ RUN pip install --no-cache-dir gunicorn uvloop uvicorn[standard] watchfiles
 # Copy the application code and scripts into the container
 COPY ./app /app/app
 
+# Copy Alembic migrations and configuration
+COPY ./alembic /app/alembic
+COPY ./alembic.ini /app/alembic.ini
+
 # Copy any additional scripts or files
 COPY ./scripts /app/scripts
 
@@ -32,6 +36,7 @@ EXPOSE 5000
 
 # Set environment variable defaults
 ENV USE_UVLOOP=false
+ENV ALEMBIC_CONFIG=/app/alembic.ini
 
 # Command to run the application
 CMD ["uvicorn", "app.api.fast_api_app:app", "--host", "0.0.0.0", "--port", "5000", "--loop", "asyncio", "--http", "httptools"]

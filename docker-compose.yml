@@ -2,25 +2,26 @@ name: govstack-server
 
 services:
   govstack-server:
-    build:
+    build: &govstack_api_build
       args:
         PIP_EXTRA_ARGS: "--no-cache-dir --no-binary=:all:"
       context: .
       dockerfile: docker/api.Dockerfile
     ports:
       - "5000:5000"
-    env_file:
+    env_file: &govstack_env_files
       - .env
     volumes:
       - ./data:/app/data
       - ./storage:/app/storage
     runtime: ${DOCKER_RUNTIME:-runc}
-    environment:
+    environment: &govstack_shared_env
       - USE_GPU=${USE_GPU:-false}
       - CHROMA_HOST=chroma
       - CHROMA_PORT=8000  # Internal port, not the exposed port
       - SENTRY_DSN=${SENTRY_DSN:-}  # Make Sentry DSN optional
       - DATABASE_URL=postgresql+asyncpg://postgres:${POSTGRES_PASSWORD:-postgres}@postgres:5432/govstackdb
+      - DATABASE_MIGRATIONS_URL=postgresql://postgres:${POSTGRES_PASSWORD:-postgres}@postgres:5432/govstackdb
       - MINIO_ENDPOINT=minio
       - MINIO_PORT=9000
       - MINIO_ACCESS_KEY=${MINIO_ACCESS_KEY:-minioadmin}
@@ -30,9 +31,26 @@ services:
     networks:
       - govstack-net
     depends_on:
-      - chroma
-      - postgres
-      - minio
+      chroma:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+
+  alembic:
+    build: *govstack_api_build
+    env_file: *govstack_env_files
+    environment: *govstack_shared_env
+    working_dir: /app
+    entrypoint: ["alembic"]
+    command: ["upgrade", "head"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - govstack-net
+    restart: "no"
 
   postgres:
     image: postgres:17.5
@@ -86,7 +104,7 @@ services:
       - ./data/chroma:/data:rw
       - ./server.htpasswd:/chroma/server.htpasswd:ro
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/api/v1/heartbeat"]
+      test: [ "CMD", "/bin/bash", "-c", "cat < /dev/null > /dev/tcp/localhost/8000" ]
       interval: 10s
       timeout: 5s
       retries: 5

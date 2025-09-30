@@ -30,6 +30,7 @@ MANIFEST
 .env
 .env.*
 !.env.example
+test_data/
 
 
 
