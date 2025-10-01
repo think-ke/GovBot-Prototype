@@ -44,7 +44,7 @@ def register_document_index_job(collection_id: str) -> str:
         "documents_processed": 0,
         "documents_indexed": 0,
         "progress_percent": 0.0,
-        "message": None,
+        "message": "Queued for background indexing",
         "error": None,
         "created_at": now,
         "started_at": None,
@@ -60,7 +60,21 @@ def update_document_index_job(job_id: str, **updates: Any) -> None:
     if not job:
         return
 
-    job.update({k: v for k, v in updates.items() if v is not None or k == "message"})
+    sanitized_updates: Dict[str, Any] = {}
+    for key, value in updates.items():
+        if key == "progress_percent" and value is not None:
+            try:
+                value = max(0.0, min(float(value), 100.0))
+            except (TypeError, ValueError):
+                continue
+
+        if value is not None or key == "message":
+            sanitized_updates[key] = value
+
+    if not sanitized_updates:
+        return
+
+    job.update(sanitized_updates)
     job["updated_at"] = datetime.now(timezone.utc).isoformat()
 
 
@@ -70,12 +84,24 @@ def get_document_index_job(job_id: str) -> Optional[Dict[str, Any]]:
     return dict(job) if job else None
 
 
-def list_document_index_jobs(collection_id: Optional[str] = None) -> List[Dict[str, Any]]:
+def list_document_index_jobs(
+    collection_id: Optional[str] = None,
+    limit: Optional[int] = 50,
+) -> List[Dict[str, Any]]:
     """List indexing jobs, optionally filtered by collection."""
-    jobs = document_index_jobs.values()
+    jobs_iterable = list(document_index_jobs.values())
     if collection_id:
-        jobs = [job for job in jobs if job.get("collection_id") == collection_id]
-    return [dict(job) for job in jobs]
+        jobs_iterable = [job for job in jobs_iterable if job.get("collection_id") == collection_id]
+
+    sorted_jobs = sorted(
+        (dict(job) for job in jobs_iterable),
+        key=lambda job: job.get("updated_at") or job.get("created_at") or "",
+        reverse=True,
+    )
+
+    if limit is not None and limit >= 0:
+        return sorted_jobs[:limit]
+    return sorted_jobs
 
 async def extract_texts_by_collection(
     db: AsyncSession,
@@ -1076,7 +1102,7 @@ def start_background_document_indexing(collection_id: str, job_id: Optional[str]
                 try:
                     from app.core.rag.tool_loader import refresh_collections
 
-                    refresh_collections()
+                    refresh_collections(collection_id)
                     update_document_index_job(
                         job_id,
                         message="Indexing completed and cache refreshed"

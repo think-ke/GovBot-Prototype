@@ -20,25 +20,27 @@ This plan breaks the requirements into executable tasks and sub-tasks, ordered b
   - **T0.2** Produce a lightweight architecture decision record covering background job framework, ingestion data flow, and cache refresh strategy.
   - **T0.3** Update observability plan (metrics, dashboards) to align with performance and visibility requirements.
 
-## Phase 1 – Background Job & Persistence Foundation
+## Phase 1 – Background Job Tracking Baseline
 
-### T1 – Introduce Durable Task Queue & Job Store
+### T1 – In-memory Indexing Job Registry
+- **Status:** ✅ Done
 - **Depends on:** T0
-- **Linked requirements:** R2, R3, R4, R5
-- **Purpose:** Provide asynchronous execution, persistence, and progress tracking for ingestion and indexing workflows.
-- **Sub-tasks:**
-  - **T1.1** Choose and provision task queue (e.g., Celery/RQ/Arq) with Redis/Postgres.
-  - **T1.2** Implement shared job tracking schema/API (job table or queue-backed store) with status fields supporting R4.
-  - **T1.3** Expose health checks and monitoring hooks for the worker infrastructure.
-
-### T2 – Migrate Existing Background Workloads to Queue
-- **Depends on:** T1
 - **Linked requirements:** R2, R3, R4
-- **Purpose:** Ensure current indexing and crawl tasks run on the new infrastructure.
+- **Purpose:** Stand up lightweight job tracking without introducing new infrastructure.
 - **Sub-tasks:**
-  - **T2.1** Refactor `start_background_document_indexing` to enqueue jobs instead of calling `asyncio.run`.
-  - **T2.2** Wrap crawl execution in queued jobs with persisted status updates.
-  - **T2.3** Implement generic job progress reporting hook for ingestion and crawl tasks.
+  - **T1.1** Add in-memory job data structure with lifecycle timestamps.
+  - **T1.2** Emit progress updates from indexing batches and cache refresh hook.
+  - **T1.3** Ensure background scheduling reuses the running event loop when available.
+
+### T2 – API Integration for Indexing Job Visibility
+- **Status:** 🛠️ In Progress
+- **Depends on:** T1
+- **Linked requirements:** R1, R2, R4
+- **Purpose:** Surface job identifiers and status endpoints so clients can poll progress.
+- **Sub-tasks:**
+  - **T2.1** ✅ Attach `index_job_id` to upload/update responses.
+  - **T2.2** ✅ Provide `/documents/indexing-jobs` and `/documents/indexing-jobs/{job_id}` endpoints.
+  - **T2.3** ⏳ Add unit/API tests for new responses (pending once auth fixtures ready).
 
 ## Phase 2 – Ingestion Pipeline Improvements
 
@@ -63,13 +65,14 @@ This plan breaks the requirements into executable tasks and sub-tasks, ordered b
 ## Phase 3 – Cache Refresh & Collection Scalability
 
 ### T5 – Intelligent Index Cache Invalidation
+- **Status:** 🛠️ In Progress
 - **Depends on:** T2
 - **Linked requirements:** R2, R5
 - **Purpose:** Ensure bots use fresh embeddings without full process restarts.
 - **Sub-tasks:**
-  - **T5.1** Replace global `index_dict` cache with per-collection handles that can be swapped post-indexing.
-  - **T5.2** Hook indexing job completion events to trigger targeted cache refresh.
-  - **T5.3** Add integration tests verifying bots surface new content within SLA.
+  - **T5.1** ✅ Replace global `index_dict` cache with per-collection handles that can be swapped post-indexing.
+  - **T5.2** ✅ Hook indexing job completion events to trigger targeted cache refresh.
+  - **T5.3** ⏳ Add integration tests verifying bots surface new content within SLA.
 
 ### T6 – Collection Management Performance & Bulk Operations
 - **Depends on:** T5

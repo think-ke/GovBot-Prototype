@@ -1,5 +1,6 @@
 import chromadb
 import os
+from datetime import datetime, timezone
 from typing import Dict, List, Any, Callable, Optional
 from app.utils.prompts import QUERY_ENGINE_PROMPT
 from llama_index.core import VectorStoreIndex, StorageContext, Settings
@@ -113,51 +114,118 @@ def get_collection_metadata() -> Dict[str, Dict[str, str]]:
     return collection_dict
 
 
+CollectionIndexHandle = Dict[str, Any]
+
+# Lazy per-collection cache keyed by canonical collection id
+collection_index_handles: Dict[str, CollectionIndexHandle] = {}
+
+
 def load_indexes() -> Dict[str, VectorStoreIndex]:
-    logger.info("Loading indexes from ChromaDB")
-    idx: Dict[str, VectorStoreIndex] = {}
-    client: Any = get_chroma_client()
-
-    meta = get_collection_metadata()
-    # canonical indexes
-    for canonical_id, entry in meta.items():
-        chroma_coll = client.get_or_create_collection(name=str(canonical_id))
-        vs = ChromaVectorStore(chroma_collection=chroma_coll)
-        StorageContext.from_defaults(vector_store=vs)
-        index = VectorStoreIndex.from_vector_store(vector_store=vs, embed_model=embed_model)
-        idx[str(canonical_id)] = index
-        logger.info(f"Loaded index for {entry['collection_name']} ({canonical_id})")
-
-    # alias pointers
-    for alias, canonical in _alias_to_canonical.items():
-        if str(canonical) in idx:
-            idx[alias] = idx[str(canonical)]
-    return idx
-
-
-# lazy index cache
-index_dict: Optional[Dict[str, VectorStoreIndex]] = None
+    """Compatibility shim for legacy importers that expect eager loading."""
+    return refresh_collection_indexes()
 
 
 def get_index_dict() -> Dict[str, VectorStoreIndex]:
-    global index_dict
-    if index_dict is None:
-        index_dict = load_indexes()
-    return index_dict
+    if not collection_index_handles:
+        load_indexes()
+
+    index_map: Dict[str, VectorStoreIndex] = {
+        canonical_id: handle["index"]
+        for canonical_id, handle in collection_index_handles.items()
+    }
+
+    alias_map = get_alias_map()
+    for alias, canonical in alias_map.items():
+        if canonical in collection_index_handles:
+            index_map[alias] = collection_index_handles[canonical]["index"]
+
+    return index_map
 
 
-def refresh_collections() -> Dict[str, VectorStoreIndex]:
-    """Invalidate caches and reload collections + indexes.
+def refresh_collections(collection_id: Optional[str] = None) -> Dict[str, VectorStoreIndex]:
+    """Refresh vector indexes.
 
-    Returns the fresh index dictionary.
+    Args:
+        collection_id: Optional canonical or alias identifier. When provided, only the
+            targeted collection is rebuilt; otherwise every collection is refreshed.
     """
-    global collection_dict, index_dict
-    logger.info("Refreshing collection metadata and indexes")
-    collection_dict = None
-    index_dict = None
-    # Force reload
-    _ = get_collection_metadata()
+
+    return refresh_collection_indexes(collection_id)
+
+
+def refresh_collection_indexes(collection_id: Optional[str] = None) -> Dict[str, VectorStoreIndex]:
+    logger.info("Refreshing %sindex cache", "targeted " if collection_id else "global ")
+
+    if collection_id:
+        canonical_id = _resolve_collection_identifier(collection_id)
+        if canonical_id is None:
+            logger.warning("Requested refresh for unknown collection '%s'", collection_id)
+            return get_index_dict()
+
+        metadata = get_collection_metadata()
+        if canonical_id not in metadata:
+            logger.info("Metadata missing for '%s'; reloading collections", canonical_id)
+            _reload_collection_metadata()
+            metadata = get_collection_metadata()
+
+        if canonical_id not in metadata:
+            logger.error("Unable to refresh index for unknown collection '%s'", canonical_id)
+            return get_index_dict()
+
+        collection_index_handles[canonical_id] = _build_collection_index_handle(canonical_id)
+        return get_index_dict()
+
+    _reload_collection_metadata()
+    collection_index_handles.clear()
+    metadata = get_collection_metadata()
+    for canonical_id in metadata.keys():
+        collection_index_handles[canonical_id] = _build_collection_index_handle(canonical_id)
+
     return get_index_dict()
+
+
+def _build_collection_index_handle(canonical_id: str) -> CollectionIndexHandle:
+    client: Any = get_chroma_client()
+    chroma_coll = client.get_or_create_collection(name=str(canonical_id))
+    vs = ChromaVectorStore(chroma_collection=chroma_coll)
+    StorageContext.from_defaults(vector_store=vs)
+    index = VectorStoreIndex.from_vector_store(vector_store=vs, embed_model=embed_model)
+
+    metadata = get_collection_metadata().get(str(canonical_id), {})
+    handle: CollectionIndexHandle = {
+        "index": index,
+        "collection_id": str(canonical_id),
+        "collection_name": metadata.get("collection_name"),
+        "refreshed_at": datetime.now(timezone.utc).isoformat(),
+    }
+    logger.info(
+        "Loaded index for %s (%s)",
+        metadata.get("collection_name", canonical_id),
+        canonical_id,
+    )
+    return handle
+
+
+def _reload_collection_metadata() -> None:
+    global collection_dict
+    collection_dict = None
+    _ = get_collection_metadata()
+
+
+def _resolve_collection_identifier(identifier: str) -> Optional[str]:
+    if not identifier:
+        return None
+
+    metadata = get_collection_metadata()
+    if identifier in metadata:
+        return identifier
+
+    alias_map = get_alias_map()
+    canonical = alias_map.get(identifier)
+    if canonical:
+        return canonical
+
+    return identifier if identifier in metadata else None
 
 
 def get_alias_map() -> Dict[str, str]:

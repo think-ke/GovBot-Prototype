@@ -710,7 +710,7 @@ class DocumentIndexJobStatus(BaseModel):
     job_id: str
     collection_id: str
     status: str
-    documents_total: Optional[int] = None
+    documents_total: int = 0
     documents_processed: int = 0
     documents_indexed: int = 0
     progress_percent: float = 0.0
@@ -1435,9 +1435,10 @@ async def get_document_indexing_job_status(
 )
 async def list_document_indexing_job_status(
     collection_id: Optional[str] = Query(None, description="Optional collection ID to filter jobs"),
+    limit: int = Query(50, ge=1, le=500, description="Maximum number of jobs to return"),
     api_key_info: APIKeyInfo = Depends(require_read_permission),
 ):
-    return list_document_index_jobs(collection_id)
+    return list_document_index_jobs(collection_id, limit)
 
 
 @collection_router.get("/{collection_id}/indexing-status", 

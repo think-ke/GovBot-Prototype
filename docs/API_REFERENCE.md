@@ -506,13 +506,15 @@ X-API-Key: your-api-key-here
   "created_by": "user123",
   "updated_by": null,
   "created_at": "2023-10-20T14:30:15.123456",
-  "access_url": "https://minio.example.com/presigned-url"
+  "access_url": "https://minio.example.com/presigned-url",
+  "index_job_id": "2f7a6e2c-9ca4-4d85-9dd7-42e6f4e9e7ad"
 }
 ```
 
 **Side Effects:**
 - File stored in MinIO object storage
 - Sets `is_indexed=false`, triggers background indexing
+- Returns `index_job_id` so clients can poll indexing progress
 - Creates audit log entry
 ```
 
@@ -590,13 +592,15 @@ X-API-Key: your-api-key-here
   "created_by": "user123",
   "updated_by": "user456",
   "upload_date": "2023-10-20T14:30:15.123456",
-  "access_url": "https://minio.example.com/presigned-url"
+  "access_url": "https://minio.example.com/presigned-url",
+  "index_job_id": "2f7a6e2c-9ca4-4d85-9dd7-42e6f4e9e7ad"
 }
 ```
 
 **Side Effects:**
 - If `file` is provided: uploads new file to MinIO, deletes old file, clears vector embeddings by doc_id, sets `is_indexed=false`, triggers background reindexing
 - If `collection_id` changes: deletes vectors from old collection, sets `is_indexed=false`, triggers reindexing in new collection
+- When a reindex is scheduled, response includes `index_job_id` for progress polling
 
 ### Delete Document
 
@@ -644,6 +648,72 @@ X-API-Key: your-api-key-here
   "indexed": 142,
   "unindexed": 8,
   "progress_percent": 94.7
+}
+```
+
+### List Document Indexing Jobs
+
+List recent background indexing jobs, optionally filtered by collection.
+
+```http
+GET /documents/indexing-jobs?collection_id=policies
+X-API-Key: your-api-key-here
+```
+
+**Query Parameters:**
+- `collection_id`: Optional collection identifier to filter results
+- `limit`: Optional maximum number of jobs to return (default 50, max 500)
+
+**Required Permission:** `read`
+
+**Response:**
+```json
+[
+  {
+    "job_id": "2f7a6e2c-9ca4-4d85-9dd7-42e6f4e9e7ad",
+    "collection_id": "policies",
+    "status": "running",
+    "documents_total": 25,
+    "documents_processed": 10,
+    "documents_indexed": 10,
+    "progress_percent": 40.0,
+    "message": "Indexed 10/25 documents",
+    "error": null,
+    "created_at": "2025-10-01T09:15:00.123456+00:00",
+    "started_at": "2025-10-01T09:15:01.456789+00:00",
+    "completed_at": null,
+    "updated_at": "2025-10-01T09:16:05.000000+00:00"
+  }
+]
+```
+
+### Get Document Indexing Job
+
+Retrieve the latest status for a specific background indexing job.
+
+```http
+GET /documents/indexing-jobs/{job_id}
+X-API-Key: your-api-key-here
+```
+
+**Required Permission:** `read`
+
+**Response:**
+```json
+{
+  "job_id": "2f7a6e2c-9ca4-4d85-9dd7-42e6f4e9e7ad",
+  "collection_id": "policies",
+  "status": "completed",
+  "documents_total": 25,
+  "documents_processed": 25,
+  "documents_indexed": 25,
+  "progress_percent": 100.0,
+  "message": "Indexing completed and cache refreshed",
+  "error": null,
+  "created_at": "2025-10-01T09:15:00.123456+00:00",
+  "started_at": "2025-10-01T09:15:01.456789+00:00",
+  "completed_at": "2025-10-01T09:17:45.000000+00:00",
+  "updated_at": "2025-10-01T09:17:45.000000+00:00"
 }
 ```
 

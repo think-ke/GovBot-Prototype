@@ -160,6 +160,7 @@ GovStack is an AI-powered eCitizen services agent designed to provide assistance
 - **Database Scaling**: Read replicas and connection pooling
 - **Vector Database**: Distributed ChromaDB deployment
 - **Caching Layer**: Response caching for common queries
+- **Vector Index Refresh**: Per-collection index handles allow targeted reloads after ingestion jobs complete, eliminating full cache flushes for incremental updates
 - **Batch Processing**: Asynchronous document processing
 
 ## Localization Approach
