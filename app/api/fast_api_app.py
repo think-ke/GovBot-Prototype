@@ -32,7 +32,15 @@ from app.db.models.collection import Collection
 from app.db.models.audit_log import AuditLog, Base as AuditBase
 from app.core.crawlers.web_crawler import crawl_website
 from app.core.crawlers.utils import get_page_as_markdown
-from app.core.rag.indexer import extract_text_batch, get_collection_stats, start_background_indexing, start_background_document_indexing
+from app.core.rag.indexer import (
+    extract_text_batch,
+    get_collection_stats,
+    start_background_indexing,
+    start_background_document_indexing,
+    register_document_index_job,
+    get_document_index_job,
+    list_document_index_jobs,
+)
 from app.core.rag.vectorstore_admin import delete_embeddings_for_doc
 from app.utils.security import add_api_key_to_docs, validate_api_key, require_read_permission, require_write_permission, require_delete_permission, APIKeyInfo, log_audit_action
 
@@ -307,16 +315,18 @@ async def upload_document(
             api_key_name=api_key_info.name
         )
         
-        # Start background indexing for the uploaded document
-        background_tasks.add_task(start_background_document_indexing, collection_id)
-        
+        # Start background indexing for the uploaded document and expose job ID
+        index_job_id = register_document_index_job(collection_id)
+        background_tasks.add_task(start_background_document_indexing, collection_id, index_job_id)
+
         # Generate access URL
         access_url = minio_client.get_presigned_url(object_name)
-        
-        # Return metadata with URL
+
+        # Return metadata with URL and background job ID to poll progress
         result = document.to_dict()
         result["access_url"] = access_url
-        
+        result["index_job_id"] = index_job_id
+
         return result
     
     except Exception as e:
@@ -475,6 +485,7 @@ async def update_document(
     **Returns:** Updated document metadata with indexing status
     """
     try:
+        index_job_id: Optional[str] = None
         doc = await db.get(Document, document_id)
         if not doc:
             raise HTTPException(status_code=404, detail="Document not found")
@@ -556,11 +567,19 @@ async def update_document(
         try:
             if ("file_replaced" in changes or "collection_id" in changes) and doc.collection_id:
                 if background_tasks is not None:
-                    background_tasks.add_task(start_background_document_indexing, str(doc.collection_id))
+                    index_job_id = register_document_index_job(str(doc.collection_id))
+                    background_tasks.add_task(
+                        start_background_document_indexing,
+                        str(doc.collection_id),
+                        index_job_id,
+                    )
         except Exception as ve:
             logger.warning(f"Failed to schedule background reindex for doc {document_id}: {ve}")
 
-        return doc.to_dict()
+        response_payload = doc.to_dict()
+        if index_job_id:
+            response_payload["index_job_id"] = index_job_id
+        return response_payload
     except HTTPException:
         raise
     except Exception as e:
@@ -684,6 +703,23 @@ class DocumentIndexingStatusResponse(BaseModel):
     indexed: int
     unindexed: int
     progress_percent: float
+
+
+class DocumentIndexJobStatus(BaseModel):
+    """Response model for background document indexing job status."""
+    job_id: str
+    collection_id: str
+    status: str
+    documents_total: Optional[int] = None
+    documents_processed: int = 0
+    documents_indexed: int = 0
+    progress_percent: float = 0.0
+    message: Optional[str] = None
+    error: Optional[str] = None
+    created_at: Optional[str] = None
+    started_at: Optional[str] = None
+    completed_at: Optional[str] = None
+    updated_at: Optional[str] = None
 
 class IndexingBreakdown(BaseModel):
     """Indexing breakdown for a specific content type."""
@@ -1362,6 +1398,46 @@ async def get_documents_indexing_status(
     except Exception as e:
         logger.error(f"Error getting documents indexing status: {e}")
         raise HTTPException(status_code=500, detail=f"Error getting documents indexing status: {str(e)}")
+
+
+@document_router.get(
+    "/indexing-jobs/{job_id}",
+    response_model=DocumentIndexJobStatus,
+    summary="Get document indexing job status",
+    description="Retrieve the latest status for a specific background indexing job",
+    responses={
+        200: {"description": "Indexing job status retrieved successfully"},
+        403: {"description": "Insufficient permissions"},
+        404: {"description": "Job not found"},
+        500: {"description": "Internal server error"},
+    },
+)
+async def get_document_indexing_job_status(
+    job_id: str = Path(..., description="Indexing job identifier"),
+    api_key_info: APIKeyInfo = Depends(require_read_permission),
+):
+    job = get_document_index_job(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Indexing job not found")
+    return job
+
+
+@document_router.get(
+    "/indexing-jobs",
+    response_model=List[DocumentIndexJobStatus],
+    summary="List document indexing jobs",
+    description="List recent document indexing jobs, optionally filtered by collection",
+    responses={
+        200: {"description": "Indexing jobs listed successfully"},
+        403: {"description": "Insufficient permissions"},
+        500: {"description": "Internal server error"},
+    },
+)
+async def list_document_indexing_job_status(
+    collection_id: Optional[str] = Query(None, description="Optional collection ID to filter jobs"),
+    api_key_info: APIKeyInfo = Depends(require_read_permission),
+):
+    return list_document_index_jobs(collection_id)
 
 
 @collection_router.get("/{collection_id}/indexing-status", 

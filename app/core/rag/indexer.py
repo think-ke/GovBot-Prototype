@@ -10,6 +10,7 @@ import asyncio
 import tempfile
 from datetime import datetime, timezone, timedelta
 from typing import List, Dict, Optional, Union, Tuple, Any
+from uuid import uuid4
 from sqlalchemy import select, and_, update, func
 from sqlalchemy.ext.asyncio import AsyncSession
 import chromadb
@@ -24,6 +25,57 @@ LlamaIndexInstrumentor().instrument()
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
+
+# In-memory job tracking for document indexing tasks.
+# These entries are lightweight status snapshots so the API can report progress
+# without introducing a new persistence technology.
+document_index_jobs: Dict[str, Dict[str, Any]] = {}
+
+
+def register_document_index_job(collection_id: str) -> str:
+    """Create a new document indexing job entry."""
+    job_id = str(uuid4())
+    now = datetime.now(timezone.utc).isoformat()
+    document_index_jobs[job_id] = {
+        "job_id": job_id,
+        "collection_id": collection_id,
+        "status": "pending",
+        "documents_total": 0,
+        "documents_processed": 0,
+        "documents_indexed": 0,
+        "progress_percent": 0.0,
+        "message": None,
+        "error": None,
+        "created_at": now,
+        "started_at": None,
+        "completed_at": None,
+        "updated_at": now,
+    }
+    return job_id
+
+
+def update_document_index_job(job_id: str, **updates: Any) -> None:
+    """Update fields on a tracked document indexing job."""
+    job = document_index_jobs.get(job_id)
+    if not job:
+        return
+
+    job.update({k: v for k, v in updates.items() if v is not None or k == "message"})
+    job["updated_at"] = datetime.now(timezone.utc).isoformat()
+
+
+def get_document_index_job(job_id: str) -> Optional[Dict[str, Any]]:
+    """Fetch the current status for a specific indexing job."""
+    job = document_index_jobs.get(job_id)
+    return dict(job) if job else None
+
+
+def list_document_index_jobs(collection_id: Optional[str] = None) -> List[Dict[str, Any]]:
+    """List indexing jobs, optionally filtered by collection."""
+    jobs = document_index_jobs.values()
+    if collection_id:
+        jobs = [job for job in jobs if job.get("collection_id") == collection_id]
+    return [dict(job) for job in jobs]
 
 async def extract_texts_by_collection(
     db: AsyncSession,
@@ -805,7 +857,10 @@ async def download_and_process_documents(
         return []
 
 
-async def index_uploaded_documents_by_collection(collection_id: str) -> Dict[str, Any]:
+async def index_uploaded_documents_by_collection(
+    collection_id: str,
+    job_id: Optional[str] = None
+) -> Dict[str, Any]:
     """
     Index uploaded documents for a specific collection using SimpleDirectoryReader.
     
@@ -824,6 +879,14 @@ async def index_uploaded_documents_by_collection(collection_id: str) -> Dict[str
         "documents_indexed": 0,
         "source_type": "uploaded_documents"
     }
+
+    if job_id:
+        update_document_index_job(
+            job_id,
+            status="running",
+            started_at=start_time.isoformat(),
+            message="Preparing to index uploaded documents"
+        )
     
     try:
         # Get database session
@@ -832,6 +895,13 @@ async def index_uploaded_documents_by_collection(collection_id: str) -> Dict[str
             # Get unindexed documents
             documents = await get_unindexed_uploaded_documents(db, collection_id)
             
+            total_documents = len(documents)
+            if job_id:
+                update_document_index_job(
+                    job_id,
+                    documents_total=total_documents
+                )
+
             if not documents:
                 logger.info(f"No unindexed uploaded documents found for collection '{collection_id}'")
                 stats.update({
@@ -839,9 +909,17 @@ async def index_uploaded_documents_by_collection(collection_id: str) -> Dict[str
                     "end_time": datetime.now(timezone.utc).isoformat(),
                     "message": "No documents to index"
                 })
+                if job_id:
+                    update_document_index_job(
+                        job_id,
+                        status="completed",
+                        completed_at=stats["end_time"],
+                        progress_percent=100.0,
+                        message=stats["message"],
+                    )
                 return stats
             
-            logger.info(f"Found {len(documents)} uploaded documents to index for collection '{collection_id}'")
+            logger.info(f"Found {total_documents} uploaded documents to index for collection '{collection_id}'")
             
             # Set up vector store
             vector_store, pipeline = await setup_vector_store(collection_id)
@@ -850,7 +928,7 @@ async def index_uploaded_documents_by_collection(collection_id: str) -> Dict[str
             batch_size = 10  # Smaller batch size for file processing
             total_indexed = 0
             
-            for i in range(0, len(documents), batch_size):
+            for i in range(0, total_documents, batch_size):
                 batch_docs = documents[i:i+batch_size]
                 logger.info(f"Processing batch {i//batch_size + 1}/{(len(documents)-1)//batch_size + 1} " +
                            f"({len(batch_docs)} documents)")
@@ -879,14 +957,31 @@ async def index_uploaded_documents_by_collection(collection_id: str) -> Dict[str
                         total_indexed += len(document_ids)
                         
                         logger.info(f"Successfully indexed batch of {len(document_ids)} uploaded documents")
+
+                        if job_id:
+                            processed_count = min(i + len(batch_docs), total_documents)
+                            progress = round((processed_count / total_documents) * 100, 1) if total_documents else 100.0
+                            update_document_index_job(
+                                job_id,
+                                documents_processed=processed_count,
+                                documents_indexed=total_indexed,
+                                progress_percent=progress,
+                                message=f"Indexed {total_indexed}/{total_documents} documents"
+                            )
                         
                     except Exception as e:
                         logger.error(f"Error processing batch: {e}")
                         # Continue with next batch instead of failing completely
+                        if job_id:
+                            update_document_index_job(
+                                job_id,
+                                message=f"Batch failed: {e}",
+                                error=str(e)
+                            )
                         continue
             
             # Update stats
-            stats["documents_processed"] = len(documents)
+            stats["documents_processed"] = total_documents
             stats["documents_indexed"] = total_indexed
             
             end_time = datetime.now(timezone.utc)
@@ -895,8 +990,20 @@ async def index_uploaded_documents_by_collection(collection_id: str) -> Dict[str
                 "end_time": end_time.isoformat(),
                 "processing_time_seconds": (end_time - start_time).total_seconds()
             })
+
+            if job_id:
+                update_document_index_job(
+                    job_id,
+                    status="completed",
+                    completed_at=end_time.isoformat(),
+                    documents_indexed=total_indexed,
+                    documents_processed=total_documents,
+                    progress_percent=100.0,
+                    message="Indexing completed successfully",
+                    error=None
+                )
             
-            logger.info(f"Successfully indexed {total_indexed}/{len(documents)} uploaded documents in collection '{collection_id}'")
+            logger.info(f"Successfully indexed {total_indexed}/{total_documents} uploaded documents in collection '{collection_id}'")
             return stats
     
     except Exception as e:
@@ -906,6 +1013,14 @@ async def index_uploaded_documents_by_collection(collection_id: str) -> Dict[str
             "error": str(e),
             "end_time": datetime.now(timezone.utc).isoformat()
         })
+        if job_id:
+            update_document_index_job(
+                job_id,
+                status="failed",
+                completed_at=stats["end_time"],
+                error=str(e),
+                message=f"Indexing failed: {e}"
+            )
         return stats
 
 
@@ -940,27 +1055,73 @@ async def has_unindexed_uploaded_documents(
         logger.error(f"Error checking for unindexed uploaded documents: {e}")
         return False, 0
 
+def start_background_document_indexing(collection_id: str, job_id: Optional[str] = None) -> str:
+    """Schedule indexing of uploaded documents for a collection.
 
-def start_background_document_indexing(collection_id: str) -> None:
+    Returns the job identifier used for status tracking.
     """
-    Start indexing uploaded documents for a collection in the background.
-    
-    Args:
-        collection_id: The collection ID to process
-    """
+    job_id = job_id or register_document_index_job(collection_id)
+
     async def _run_document_indexing():
         try:
-            logger.info(f"Starting background document indexing for collection '{collection_id}'")
-            result = await index_uploaded_documents_by_collection(collection_id)
-            logger.info(f"Background document indexing completed for collection '{collection_id}': {result['status']}")
+            logger.info(
+                f"Starting background document indexing for collection '{collection_id}' (job {job_id})"
+            )
+            result = await index_uploaded_documents_by_collection(collection_id, job_id=job_id)
+            logger.info(
+                f"Background document indexing completed for collection '{collection_id}' (job {job_id}): {result['status']}"
+            )
+
+            if result.get("status") == "completed":
+                try:
+                    from app.core.rag.tool_loader import refresh_collections
+
+                    refresh_collections()
+                    update_document_index_job(
+                        job_id,
+                        message="Indexing completed and cache refreshed"
+                    )
+                except Exception as refresh_error:
+                    logger.warning(
+                        "Cache refresh after indexing failed for collection '%s': %s",
+                        collection_id,
+                        refresh_error,
+                    )
+                    update_document_index_job(
+                        job_id,
+                        message="Indexing completed, but cache refresh failed",
+                        error=str(refresh_error),
+                    )
+
         except Exception as e:
-            logger.error(f"Error in background document indexing for collection '{collection_id}': {e}")
-    
-    # Run the async function in a new event loop
+            logger.error(
+                "Error in background document indexing for collection '%s' (job %s): %s",
+                collection_id,
+                job_id,
+                e,
+            )
+            update_document_index_job(
+                job_id,
+                status="failed",
+                completed_at=datetime.now(timezone.utc).isoformat(),
+                error=str(e),
+                message=f"Indexing failed: {e}",
+            )
+
     try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        loop = None
+
+    if loop and loop.is_running():
+        loop.create_task(_run_document_indexing())
+    else:
         asyncio.run(_run_document_indexing())
-    except Exception as e:
-        logger.error(f"Error starting document indexing task: {e}")
-    
-    logger.info(f"Completed background document indexing task for collection '{collection_id}'")
+
+    logger.info(
+        "Scheduled background document indexing task for collection '%s' (job %s)",
+        collection_id,
+        job_id,
+    )
+    return job_id
 
