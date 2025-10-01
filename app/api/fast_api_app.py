@@ -44,6 +44,7 @@ from app.core.rag.indexer import (
 )
 from app.core.rag.vectorstore_admin import delete_embeddings_for_doc
 from app.utils.security import add_api_key_to_docs, validate_api_key, require_read_permission, require_write_permission, require_delete_permission, APIKeyInfo, log_audit_action
+from app.utils.document_parsers import SUPPORTED_DOCUMENT_EXTENSIONS
 
 import logfire
 
@@ -86,11 +87,7 @@ def _get_file_extension(filename: Optional[str]) -> str:
         return ""
 
 
-SUPPORTED_UPLOAD_EXTENSIONS = {
-    ".pdf",
-    ".txt",
-    ".md",
-}
+SUPPORTED_UPLOAD_EXTENSIONS = set(SUPPORTED_DOCUMENT_EXTENSIONS)
 
 
 def _validate_upload_extension(extension: str) -> None:
@@ -570,12 +567,16 @@ async def update_document(
             except Exception as ve:
                 logger.warning(f"Failed to delete old object for doc {document_id}: {ve}")
             # update doc fields
-            doc.object_name = new_object_name
-            doc.filename = safe_name or new_object_name
-            doc.content_type = content_type
-            doc.size = file_size
-            doc.is_indexed = False
-            doc.indexed_at = None
+            replacement_updates = {
+                "object_name": new_object_name,
+                "filename": safe_name or new_object_name,
+                "content_type": content_type,
+                "size": file_size,
+                "is_indexed": False,
+                "indexed_at": None,
+            }
+            for field_name, value in replacement_updates.items():
+                setattr(doc, field_name, value)
             changes["file_replaced"] = True
             # delete any existing embeddings for this document in its current collection
             try:
@@ -587,10 +588,10 @@ async def update_document(
         # Metadata updates
         if description is not None and description != doc.description:
             changes["description"] = {"old": doc.description, "new": description}
-            doc.description = description
+            setattr(doc, "description", description)
         if is_public is not None and is_public != doc.is_public:
             changes["is_public"] = {"old": doc.is_public, "new": is_public}
-            doc.is_public = bool(is_public)
+            setattr(doc, "is_public", bool(is_public))
         collection_changed = False
         old_cid: Optional[str] = None
         if collection_id is not None:
@@ -600,18 +601,18 @@ async def update_document(
                 collection_changed = True
                 old_cid = current_collection or None
                 changes["collection_id"] = {"old": doc.collection_id, "new": normalized_collection}
-                doc.collection_id = normalized_collection
+                setattr(doc, "collection_id", normalized_collection)
         if collection_changed:
             # collection change implies reindex and cleanup old vectors
-            doc.is_indexed = False
-            doc.indexed_at = None
+            setattr(doc, "is_indexed", False)
+            setattr(doc, "indexed_at", None)
             if old_cid:
                 try:
                     delete_embeddings_for_doc(collection_id=old_cid, doc_id=str(document_id))
                 except Exception as ve:
                     logger.warning(f"Failed to delete embeddings for doc {document_id} in old collection {old_cid}: {ve}")
 
-        doc.updated_by = api_key_info.get_user_id()
+        setattr(doc, "updated_by", api_key_info.get_user_id())
 
         await db.commit()
         await db.refresh(doc)
@@ -689,13 +690,14 @@ async def delete_document(
         
         # Delete embeddings from Chroma by metadata doc_id in the collection
         try:
-            if document.collection_id:
-                delete_embeddings_for_doc(collection_id=document.collection_id, doc_id=str(document_id))
+            collection_id_value = cast(Optional[str], document.collection_id)
+            if collection_id_value:
+                delete_embeddings_for_doc(collection_id=collection_id_value, doc_id=str(document_id))
         except Exception as ve:
             logger.warning(f"Failed to delete vectors for doc {document_id}: {ve}")
 
         # Delete from MinIO
-        object_name = document.object_name
+        object_name = cast(str, document.object_name)
         minio_client.delete_file(object_name)
         
         # Delete from database

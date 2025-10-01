@@ -18,6 +18,7 @@ import chromadb
 from app.db.models.webpage import Webpage
 from app.db.models.document import Document as DocumentModel
 from app.utils.storage import MinioClient
+from app.utils.document_parsers import DocumentParseError, parse_document_file
 
 from opentelemetry.instrumentation.llamaindex import LlamaIndexInstrumentor
 LlamaIndexInstrumentor().instrument()
@@ -365,7 +366,7 @@ if os.getenv("USE_UVLOOP", "false").lower() != "true":
         logging.getLogger(__name__).warning(f"Could not apply nest_asyncio: {e}")
         logging.getLogger(__name__).warning("This is normal if using uvloop. Set USE_UVLOOP=false to use nest_asyncio.")
 
-from llama_index.core import Document, SimpleDirectoryReader
+from llama_index.core import Document
 from llama_index.embeddings.openai import OpenAIEmbedding
 from llama_index.core.node_parser import SentenceSplitter, MarkdownElementNodeParser
 from llama_index.core.extractors import TitleExtractor
@@ -845,46 +846,51 @@ async def download_and_process_documents(
             logger.warning("No documents were successfully downloaded")
             return []
         
-        # Process documents using SimpleDirectoryReader
-        try:
-            # Extract just the file paths
-            file_paths = [item["path"] for item in downloaded_files]
-            
-            # Use SimpleDirectoryReader with specific file paths
-            reader = SimpleDirectoryReader(
-                input_files=file_paths,
-                required_exts=[".pdf", ".docx", ".txt", ".md"]  # Supported formats
-            )
-            
-            # Load documents
-            documents_loaded = reader.load_data()
-            
-            # Enhance documents with metadata
-            for i, doc in enumerate(documents_loaded):
-                if i < len(downloaded_files):
-                    original_doc_data = downloaded_files[i]["doc_data"]
-                    
-                    # Add custom metadata
-                    doc.metadata.update({
-                        "doc_id": original_doc_data["id"],
-                        "filename": original_doc_data["filename"],
-                        "content_type": original_doc_data["content_type"],
-                        "upload_date": original_doc_data["upload_date"],
-                        "description": original_doc_data["description"],
-                        "collection_id": original_doc_data["collection_id"],
-                        "source_type": "uploaded_document"
-                    })
-                    
-                    # Add original metadata if it exists
-                    if original_doc_data.get("metadata"):
-                        doc.metadata.update(original_doc_data["metadata"])
-            
-            logger.info(f"Successfully processed {len(documents_loaded)} documents using SimpleDirectoryReader")
-            return documents_loaded
-            
-        except Exception as e:
-            logger.error(f"Error processing documents with SimpleDirectoryReader: {e}")
+        processed_documents: List[Document] = []
+
+        for entry in downloaded_files:
+            doc_path = entry["path"]
+            original_doc_data = entry["doc_data"]
+
+            try:
+                text_content, parser_metadata = parse_document_file(doc_path)
+            except DocumentParseError as parse_error:
+                logger.error(
+                    "Failed to parse document '%s': %s",
+                    original_doc_data.get("filename"),
+                    parse_error,
+                )
+                continue
+            except Exception as unexpected_error:  # pragma: no cover - defensive branch
+                logger.exception(
+                    "Unexpected error parsing document '%s'",
+                    original_doc_data.get("filename"),
+                )
+                continue
+
+            metadata: Dict[str, Any] = {
+                "doc_id": original_doc_data["id"],
+                "filename": original_doc_data["filename"],
+                "content_type": original_doc_data["content_type"],
+                "upload_date": original_doc_data["upload_date"],
+                "description": original_doc_data["description"],
+                "collection_id": original_doc_data["collection_id"],
+                "source_type": "uploaded_document",
+            }
+
+            if original_doc_data.get("metadata"):
+                metadata.update(original_doc_data["metadata"])
+            if parser_metadata:
+                metadata["parser_metadata"] = parser_metadata
+
+            processed_documents.append(Document(text=text_content, metadata=metadata))
+
+        if not processed_documents:
+            logger.warning("All downloaded documents failed to parse; skipping indexing batch")
             return []
+
+        logger.info("Successfully processed %s documents for indexing", len(processed_documents))
+        return processed_documents
             
     except Exception as e:
         logger.error(f"Error in download_and_process_documents: {e}")

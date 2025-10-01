@@ -491,8 +491,9 @@ X-API-Key: your-api-key-here
 - `collection_id`: Collection identifier used for downstream indexing (required)
 
 **Validation:**
-- Supported extensions: `.md`, `.pdf`, `.txt`
+- Supported extensions: `.csv`, `.doc`, `.docx`, `.md`, `.pdf`, `.txt`, `.xls`, `.xlsx`
 - Requests with unsupported extensions or empty files return `415 Unsupported Media Type` or `400 Bad Request` with a descriptive error message
+- Legacy `.doc` parsing depends on the optional `textract` dependency and system utilities such as `antiword`
 
 **Response:**
 ```json

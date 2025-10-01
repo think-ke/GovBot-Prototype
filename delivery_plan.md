@@ -55,13 +55,14 @@ This plan breaks the requirements into executable tasks and sub-tasks, ordered b
   - **T3.3** ✅ Emit ingestion job record tied to upload for downstream progress reporting (feeds R4).
 
 ### T4 – Multi-format Parsing & Indexing Enhancements
+- **Status:** 🛠️ In Progress
 - **Depends on:** T3
 - **Linked requirements:** R1, R2
 - **Purpose:** Convert additional office formats and guarantee they reach the embedding pipeline.
 - **Sub-tasks:**
-  - **T4.1** Integrate converters/parsers for `.doc`, `.docx`, `.xls`, `.xlsx`, `.csv`, `.txt`, `.md`, `.pdf`.
-  - **T4.2** Extend `SimpleDirectoryReader` configuration and metadata enrichment to handle new formats.
-  - **T4.3** Add regression tests verifying each format is indexed and visible via chat/doc listings.
+  - **T4.1** ✅ Integrate converters/parsers for `.doc`, `.docx`, `.xls`, `.xlsx`, `.csv`, `.txt`, `.md`, `.pdf`.
+  - **T4.2** ✅ Extend ingestion pipeline configuration and metadata enrichment to handle new formats.
+  - **T4.3** ⏳ Add regression tests verifying each format is indexed and visible via chat/doc listings.
 
 ## Phase 3 – Cache Refresh & Collection Scalability
 
