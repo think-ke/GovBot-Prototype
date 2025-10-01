@@ -8,7 +8,7 @@ load_dotenv()
 
 import os
 import logging
-from io import BytesIO
+import mimetypes
 from fastapi import FastAPI, Depends, HTTPException, UploadFile, File, Form, BackgroundTasks, Query, APIRouter, Request, Path
 from fastapi.middleware.cors import CORSMiddleware
 from datetime import datetime, timezone, timedelta
@@ -19,8 +19,9 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.future import select
 import uvicorn
 from pydantic import BaseModel, HttpUrl, Field, validator
-from typing import List, Optional, Dict, Any, Union
+from typing import List, Optional, Dict, Any, Union, cast
 from contextlib import asynccontextmanager
+from starlette.concurrency import run_in_threadpool
 
 from app.utils.storage import minio_client
 from app.db.models.document import Document, Base as DocumentBase
@@ -83,6 +84,44 @@ def _get_file_extension(filename: Optional[str]) -> str:
         return os.path.splitext(filename)[1] if "." in filename else ""
     except Exception:
         return ""
+
+
+SUPPORTED_UPLOAD_EXTENSIONS = {
+    ".pdf",
+    ".txt",
+    ".md",
+}
+
+
+def _validate_upload_extension(extension: str) -> None:
+    """Validate that the provided file extension is supported."""
+    if not extension or extension not in SUPPORTED_UPLOAD_EXTENSIONS:
+        supported = ", ".join(sorted(SUPPORTED_UPLOAD_EXTENSIONS))
+        raise HTTPException(
+            status_code=415,
+            detail=f"Unsupported file type '{extension or 'unknown'}'. Supported extensions: {supported}",
+        )
+
+
+def _resolve_content_type(filename: Optional[str], provided_content_type: Optional[str]) -> str:
+    """Resolve the best-effort content type for an uploaded file."""
+    if provided_content_type:
+        return provided_content_type
+
+    guessed_content_type, _ = mimetypes.guess_type(filename or "")
+    return guessed_content_type or "application/octet-stream"
+
+
+async def _ensure_upload_ready(upload_file: UploadFile) -> int:
+    """Validate the uploaded file has content and return its size without buffering it in memory."""
+    await run_in_threadpool(upload_file.file.seek, 0, os.SEEK_END)
+    file_size = await run_in_threadpool(upload_file.file.tell)
+    await run_in_threadpool(upload_file.file.seek, 0)
+
+    if file_size <= 0:
+        raise HTTPException(status_code=400, detail="Uploaded file is empty.")
+
+    return file_size
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -259,42 +298,42 @@ async def upload_document(
         Document metadata with access URL
     """
     try:
-        # Generate a unique object name
-        file_extension = _get_file_extension(file.filename)
+        normalized_collection_id = (collection_id or "").strip()
+        if not normalized_collection_id:
+            raise HTTPException(status_code=400, detail="collection_id is required.")
+
+        original_filename = file.filename or ""
+        file_extension = _get_file_extension(original_filename).lower()
+        _validate_upload_extension(file_extension)
+
+        file_size = await _ensure_upload_ready(file)
+        content_type = _resolve_content_type(original_filename, file.content_type)
+
         object_name = f"{uuid.uuid4()}{file_extension}"
-        
-        # Read file content
-        file_content = await file.read()
-        file_size = len(file_content)
-        
-        # Prepare MinIO metadata with required collection_id
-        minio_metadata = {"collection_id": collection_id}
-        
-        # Convert bytes to file-like object for MinIO
-        file_obj = BytesIO(file_content)
-        
-        # Upload to MinIO
+        minio_metadata = {"collection_id": normalized_collection_id}
+
         minio_client.upload_file(
-            file_obj=file_obj,
+            file_obj=file.file,
             object_name=object_name,
-            content_type=file.content_type or "application/octet-stream",
-            metadata=minio_metadata  # Pass metadata here
+            content_type=content_type,
+            metadata=minio_metadata,
         )
-        
-        # Create document record with audit trail
+
+        await file.close()
+
         document = Document(
-            filename=file.filename,
+            filename=original_filename or object_name,
             object_name=object_name,
-            content_type=file.content_type or "application/octet-stream",
+            content_type=content_type,
             size=file_size,
             description=description,
             is_public=is_public,
-            metadata={"original_filename": file.filename},
-            collection_id=collection_id,
+            meta_data={"original_filename": original_filename or object_name},
+            collection_id=normalized_collection_id,
             created_by=api_key_info.get_user_id(),
-            api_key_name=api_key_info.name
+            api_key_name=api_key_info.name,
         )
-        
+
         db.add(document)
         await db.commit()
         await db.refresh(document)
@@ -315,9 +354,16 @@ async def upload_document(
             api_key_name=api_key_info.name
         )
         
-        # Start background indexing for the uploaded document and expose job ID
-        index_job_id = register_document_index_job(collection_id)
-        background_tasks.add_task(start_background_document_indexing, collection_id, index_job_id)
+        document_id_value = cast(Optional[int], document.id)
+        index_job_id = register_document_index_job(
+            normalized_collection_id,
+            document_ids=[document_id_value] if document_id_value is not None else None,
+        )
+        background_tasks.add_task(
+            start_background_document_indexing,
+            normalized_collection_id,
+            index_job_id,
+        )
 
         # Generate access URL
         access_url = minio_client.get_presigned_url(object_name)
@@ -494,18 +540,29 @@ async def update_document(
 
         # Handle file replacement
         if file is not None:
-            import uuid, os
+            import uuid
+
             safe_name = file.filename or ""
-            file_extension = _get_file_extension(safe_name)
-            new_object_name = f"{uuid.uuid4()}{file_extension}"
-            # upload new
-            content = await file.read()
-            file_obj = BytesIO(content)
-            minio_client.upload_file(
-                file_obj=file_obj,
-                object_name=new_object_name,
-                content_type=file.content_type or "application/octet-stream",
+            file_extension = _get_file_extension(safe_name).lower()
+            _validate_upload_extension(file_extension)
+
+            target_collection_id = (
+                (collection_id if collection_id is not None else doc.collection_id) or ""
             )
+            target_collection_id = str(target_collection_id).strip()
+
+            file_size = await _ensure_upload_ready(file)
+            content_type = _resolve_content_type(safe_name, file.content_type)
+
+            new_object_name = f"{uuid.uuid4()}{file_extension}"
+
+            minio_client.upload_file(
+                file_obj=file.file,
+                object_name=new_object_name,
+                content_type=content_type,
+                metadata={"collection_id": target_collection_id} if target_collection_id else None,
+            )
+            await file.close()
             # remove old object
             try:
                 if doc.object_name:  # type: ignore[attr-defined]
@@ -514,9 +571,9 @@ async def update_document(
                 logger.warning(f"Failed to delete old object for doc {document_id}: {ve}")
             # update doc fields
             doc.object_name = new_object_name
-            doc.filename = file.filename or safe_name
-            doc.content_type = file.content_type or "application/octet-stream"
-            doc.size = len(content)
+            doc.filename = safe_name or new_object_name
+            doc.content_type = content_type
+            doc.size = file_size
             doc.is_indexed = False
             doc.indexed_at = None
             changes["file_replaced"] = True
@@ -534,10 +591,17 @@ async def update_document(
         if is_public is not None and is_public != doc.is_public:
             changes["is_public"] = {"old": doc.is_public, "new": is_public}
             doc.is_public = bool(is_public)
-        if collection_id is not None and collection_id != doc.collection_id:
-            old_cid = str(doc.collection_id) if doc.collection_id is not None else None
-            changes["collection_id"] = {"old": doc.collection_id, "new": collection_id}
-            doc.collection_id = collection_id
+        collection_changed = False
+        old_cid: Optional[str] = None
+        if collection_id is not None:
+            normalized_collection = collection_id.strip()
+            current_collection = cast(Optional[str], doc.collection_id) or ""
+            if normalized_collection != current_collection:
+                collection_changed = True
+                old_cid = current_collection or None
+                changes["collection_id"] = {"old": doc.collection_id, "new": normalized_collection}
+                doc.collection_id = normalized_collection
+        if collection_changed:
             # collection change implies reindex and cleanup old vectors
             doc.is_indexed = False
             doc.indexed_at = None
@@ -565,12 +629,17 @@ async def update_document(
 
         # trigger background reindex if needed
         try:
-            if ("file_replaced" in changes or "collection_id" in changes) and doc.collection_id:
+            raw_collection_id = cast(Optional[str], doc.collection_id)
+            collection_for_job = raw_collection_id.strip() if raw_collection_id else ""
+            if ("file_replaced" in changes or "collection_id" in changes) and collection_for_job:
                 if background_tasks is not None:
-                    index_job_id = register_document_index_job(str(doc.collection_id))
+                    index_job_id = register_document_index_job(
+                        collection_for_job,
+                        document_ids=[cast(int, doc.id)] if doc.id is not None else None,
+                    )
                     background_tasks.add_task(
                         start_background_document_indexing,
-                        str(doc.collection_id),
+                        collection_for_job,
                         index_job_id,
                     )
         except Exception as ve:

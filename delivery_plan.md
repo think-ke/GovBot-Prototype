@@ -45,13 +45,14 @@ This plan breaks the requirements into executable tasks and sub-tasks, ordered b
 ## Phase 2 – Ingestion Pipeline Improvements
 
 ### T3 – Streaming Upload & Validation Layer
+- **Status:** ✅ Done
 - **Depends on:** T2
 - **Linked requirements:** R1, R3, R4
 - **Purpose:** Support large files without memory pressure and fail fast on unsupported types.
 - **Sub-tasks:**
-  - **T3.1** Swap `upload_document` buffering for streaming uploads to MinIO.
-  - **T3.2** Add server-side validation for supported extensions with descriptive 4xx responses.
-  - **T3.3** Emit ingestion job record tied to upload for downstream progress reporting (feeds R4).
+  - **T3.1** ✅ Swap `upload_document` buffering for streaming uploads to MinIO.
+  - **T3.2** ✅ Add server-side validation for supported extensions with descriptive 4xx responses.
+  - **T3.3** ✅ Emit ingestion job record tied to upload for downstream progress reporting (feeds R4).
 
 ### T4 – Multi-format Parsing & Indexing Enhancements
 - **Depends on:** T3

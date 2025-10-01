@@ -162,6 +162,7 @@ GovStack is an AI-powered eCitizen services agent designed to provide assistance
 - **Caching Layer**: Response caching for common queries
 - **Vector Index Refresh**: Per-collection index handles allow targeted reloads after ingestion jobs complete, eliminating full cache flushes for incremental updates
 - **Bulk Collection Provisioning**: Batch API creates multiple collections with a single targeted cache refresh to minimize downtime during large onboarding waves
+- **Streaming Uploads**: Document ingestion streams files directly to MinIO while validating allowed formats to prevent API memory pressure on large submissions
 - **Batch Processing**: Asynchronous document processing
 
 ## Localization Approach

@@ -488,7 +488,11 @@ X-API-Key: your-api-key-here
 - `file`: The document file (required)
 - `description`: Optional description text
 - `is_public`: Boolean, default false
-- `collection_id`: Optional collection identifier
+- `collection_id`: Collection identifier used for downstream indexing (required)
+
+**Validation:**
+- Supported extensions: `.md`, `.pdf`, `.txt`
+- Requests with unsupported extensions or empty files return `415 Unsupported Media Type` or `400 Bad Request` with a descriptive error message
 
 **Response:**
 ```json
@@ -666,6 +670,9 @@ X-API-Key: your-api-key-here
 
 **Required Permission:** `read`
 
+**Fields:**
+- `document_ids`: IDs of documents associated with the job when triggered by uploads or replacements
+
 **Response:**
 ```json
 [
@@ -676,6 +683,7 @@ X-API-Key: your-api-key-here
     "documents_total": 25,
     "documents_processed": 10,
     "documents_indexed": 10,
+  "document_ids": [101, 102, 103, 104, 105],
     "progress_percent": 40.0,
     "message": "Indexed 10/25 documents",
     "error": null,
@@ -707,6 +715,7 @@ X-API-Key: your-api-key-here
   "documents_total": 25,
   "documents_processed": 25,
   "documents_indexed": 25,
+  "document_ids": [101, 102, 103, 104, 105],
   "progress_percent": 100.0,
   "message": "Indexing completed and cache refreshed",
   "error": null,

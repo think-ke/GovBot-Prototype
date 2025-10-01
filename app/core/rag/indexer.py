@@ -32,18 +32,26 @@ logger = logging.getLogger(__name__)
 document_index_jobs: Dict[str, Dict[str, Any]] = {}
 
 
-def register_document_index_job(collection_id: str) -> str:
-    """Create a new document indexing job entry."""
+def register_document_index_job(collection_id: str, document_ids: Optional[List[int]] = None) -> str:
+    """Create a new document indexing job entry.
+
+    Args:
+        collection_id: Collection the job will process.
+        document_ids: Optional list of source document identifiers for progress correlation.
+    """
     job_id = str(uuid4())
     now = datetime.now(timezone.utc).isoformat()
+    normalized_document_ids = [int(doc_id) for doc_id in document_ids or []]
+
     document_index_jobs[job_id] = {
         "job_id": job_id,
         "collection_id": collection_id,
         "status": "pending",
-        "documents_total": 0,
+        "documents_total": len(normalized_document_ids),
         "documents_processed": 0,
         "documents_indexed": 0,
         "progress_percent": 0.0,
+        "document_ids": normalized_document_ids,
         "message": "Queued for background indexing",
         "error": None,
         "created_at": now,
