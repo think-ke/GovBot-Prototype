@@ -1038,8 +1038,69 @@ X-API-Key: your-api-key-here
 
 **Side Effects:**
 - Creates Chroma vector collection
-- Auto-refreshes available chat tools
+- Auto-refreshes available chat tools for the new collection only
 - New collection immediately available for document uploads and chat scoping
+
+### Bulk Create Collections
+
+Create multiple collections in a single request (up to 100 per call).
+
+```http
+POST /collections/bulk
+Content-Type: application/json
+X-API-Key: your-api-key-here
+```
+
+**Request Body:**
+```json
+{
+  "collections": [
+    {
+      "name": "County Business Hub",
+      "description": "Resources for county-level business services",
+      "type": "mixed"
+    },
+    {
+      "name": "Health Facilities",
+      "description": "Hospital and clinic information",
+      "type": "documents"
+    }
+  ]
+}
+```
+
+**Required Permission:** `write`
+
+**Response:**
+```json
+[
+  {
+    "id": "0fc52e84-4dd5-4891-9e93-9879ed9aacd1",
+    "name": "County Business Hub",
+    "description": "Resources for county-level business services",
+    "type": "mixed",
+    "created_at": "2025-10-01T09:15:10.123456+00:00",
+    "updated_at": "2025-10-01T09:15:10.123456+00:00",
+    "document_count": 0,
+    "webpage_count": 0
+  },
+  {
+    "id": "9ff22aa0-8a7e-476f-9dc3-5d35cefb6dd4",
+    "name": "Health Facilities",
+    "description": "Hospital and clinic information",
+    "type": "documents",
+    "created_at": "2025-10-01T09:15:10.123456+00:00",
+    "updated_at": "2025-10-01T09:15:10.123456+00:00",
+    "document_count": 0,
+    "webpage_count": 0
+  }
+]
+```
+
+**Side Effects:**
+- Creates multiple collections in a single transaction
+- Performs targeted cache refreshes only for the newly created collections
+- Suitable for high-volume onboarding flows without reloading every index
 
 ### List Collections
 
@@ -1095,7 +1156,7 @@ X-API-Key: your-api-key-here
 ```
 
 **Side Effects:**
-- Auto-refreshes chat tools with new metadata
+- Auto-refreshes chat tools with new metadata for the updated collection only
 - Updates system prompts for agents
 
 ### Delete Collection
@@ -1110,7 +1171,7 @@ X-API-Key: your-api-key-here
 **Required Permission:** `delete`
 
 **Side Effects:**
-- Removes collection from chat tools
+- Removes collection from chat tools and cache without reloading unaffected collections
 - Orphans documents/webpages (sets collection_id to null)
 - Auto-refreshes available tools
 

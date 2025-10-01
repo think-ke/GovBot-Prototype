@@ -142,15 +142,26 @@ def get_index_dict() -> Dict[str, VectorStoreIndex]:
     return index_map
 
 
-def refresh_collections(collection_id: Optional[str] = None) -> Dict[str, VectorStoreIndex]:
+def refresh_collections(collection_ids: Optional[object] = None) -> Dict[str, VectorStoreIndex]:
     """Refresh vector indexes.
 
     Args:
-        collection_id: Optional canonical or alias identifier. When provided, only the
-            targeted collection is rebuilt; otherwise every collection is refreshed.
+        collection_ids: When a string is provided, only that collection is refreshed.
+            When an iterable (list/tuple/set) of identifiers is provided, each
+            collection is refreshed. When None, every collection is rebuilt.
     """
 
-    return refresh_collection_indexes(collection_id)
+    if collection_ids is None:
+        return refresh_collection_indexes()
+
+    if isinstance(collection_ids, str):
+        return refresh_collection_indexes(collection_ids)
+
+    # Treat as iterable of collection identifiers
+    result: Dict[str, VectorStoreIndex] = {}
+    for collection_id in collection_ids:  # type: ignore[iteration-over-optional]
+        result = refresh_collection_indexes(str(collection_id))
+    return result
 
 
 def refresh_collection_indexes(collection_id: Optional[str] = None) -> Dict[str, VectorStoreIndex]:
@@ -169,7 +180,11 @@ def refresh_collection_indexes(collection_id: Optional[str] = None) -> Dict[str,
             metadata = get_collection_metadata()
 
         if canonical_id not in metadata:
-            logger.error("Unable to refresh index for unknown collection '%s'", canonical_id)
+            removed = collection_index_handles.pop(canonical_id, None) is not None
+            if removed:
+                logger.info("Removed cached index handle for deleted collection '%s'", canonical_id)
+            else:
+                logger.error("Unable to refresh index for unknown collection '%s'", canonical_id)
             return get_index_dict()
 
         collection_index_handles[canonical_id] = _build_collection_index_handle(canonical_id)

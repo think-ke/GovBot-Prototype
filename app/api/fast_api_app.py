@@ -18,7 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.future import select
 import uvicorn
-from pydantic import BaseModel, HttpUrl, Field
+from pydantic import BaseModel, HttpUrl, Field, validator
 from typing import List, Optional, Dict, Any, Union
 from contextlib import asynccontextmanager
 
@@ -675,6 +675,23 @@ class CollectionResponse(BaseModel):
     updated_at: str
     document_count: int
     webpage_count: int
+
+
+class BulkCreateCollectionItem(CreateCollectionRequest):
+    """Single collection definition for bulk creation."""
+
+
+class BulkCreateCollectionsRequest(BaseModel):
+    """Request body for creating multiple collections in one call."""
+    collections: List[BulkCreateCollectionItem]
+
+    @validator("collections")
+    def validate_collections(cls, value: List[BulkCreateCollectionItem]) -> List[BulkCreateCollectionItem]:
+        if not value:
+            raise ValueError("At least one collection must be provided")
+        if len(value) > 100:
+            raise ValueError("A maximum of 100 collections can be created per request")
+        return value
 
 # Web Crawler API Models
 class CrawlWebsiteRequest(BaseModel):
@@ -1542,7 +1559,7 @@ async def create_collection(
         # Trigger RAG cache refresh
         try:
             from app.core.rag.tool_loader import refresh_collections
-            refresh_collections()
+            refresh_collections(collection_id)
         except Exception as _e:
             logger.warning(f"RAG refresh after create failed: {_e}")
 
@@ -1561,6 +1578,97 @@ async def create_collection(
     except Exception as e:
         logger.error(f"Error creating collection: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Error creating collection: {str(e)}")
+
+
+@collection_router.post("/bulk", response_model=List[CollectionResponse])
+async def bulk_create_collections(
+    request_data: BulkCreateCollectionsRequest,
+    request: Request,
+    api_key_info: APIKeyInfo = Depends(require_write_permission),
+    db: AsyncSession = Depends(get_db),
+):
+    """Create multiple collections in a single request."""
+
+    try:
+        import uuid
+        from sqlalchemy.exc import IntegrityError
+
+        # Prevent duplicate names within the same payload to avoid partial commits
+        provided_names = [item.name for item in request_data.collections]
+        if len(provided_names) != len(set(provided_names)):
+            raise HTTPException(status_code=400, detail="Duplicate collection names in request payload")
+
+        new_objects: List[Collection] = []
+        for payload in request_data.collections:
+            collection_id = str(uuid.uuid4())
+            obj = Collection(
+                id=collection_id,
+                name=payload.name,
+                description=payload.description,
+                collection_type=payload.type,
+                api_key_name=api_key_info.name,
+            )
+            db.add(obj)
+            new_objects.append(obj)
+
+        try:
+            await db.commit()
+        except IntegrityError as integrity_error:
+            await db.rollback()
+            logger.warning("Bulk collection creation failed: %s", integrity_error)
+            raise HTTPException(status_code=409, detail="One or more collections already exist")
+
+        for obj in new_objects:
+            await db.refresh(obj)
+
+        # Audit log entries per collection (post-commit to avoid duplicate writes on failure)
+        for obj, payload in zip(new_objects, request_data.collections):
+            await log_audit_action(
+                user_id=api_key_info.get_user_id(),
+                action="create",
+                resource_type="collection",
+                resource_id=obj.id,
+                details={
+                    "name": payload.name,
+                    "type": payload.type,
+                    "description": payload.description,
+                    "bulk": True,
+                },
+                request=request,
+                api_key_name=api_key_info.name,
+            )
+
+        # Trigger targeted cache refresh for newly created collections
+        try:
+            from app.core.rag.tool_loader import refresh_collections
+
+            refresh_collections([obj.id for obj in new_objects])
+        except Exception as refresh_error:
+            logger.warning("RAG refresh after bulk create failed: %s", refresh_error)
+
+        now_iso = datetime.now(timezone.utc).isoformat()
+        response_payload: List[CollectionResponse] = []
+        for obj in new_objects:
+            response_payload.append(
+                CollectionResponse(
+                    id=obj.id,
+                    name=obj.name,
+                    description=obj.description,
+                    type=obj.collection_type,
+                    created_at=obj.created_at.isoformat() if obj.created_at else now_iso,
+                    updated_at=obj.updated_at.isoformat() if obj.updated_at else now_iso,
+                    document_count=0,
+                    webpage_count=0,
+                )
+            )
+
+        return response_payload
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error creating collections in bulk: {e}")
+        raise HTTPException(status_code=500, detail=f"Error creating collections in bulk: {e}")
 
 @collection_router.get("/collections", response_model=List[CollectionResponse])
 async def list_collections(
@@ -1654,7 +1762,7 @@ async def update_collection(
         # Trigger RAG cache refresh
         try:
             from app.core.rag.tool_loader import refresh_collections
-            refresh_collections()
+            refresh_collections(collection_id)
         except Exception as _e:
             logger.warning(f"RAG refresh after update failed: {_e}")
         
@@ -1725,7 +1833,7 @@ async def delete_collection(
         # Trigger RAG cache refresh
         try:
             from app.core.rag.tool_loader import refresh_collections
-            refresh_collections()
+            refresh_collections(collection_id)
         except Exception as _e:
             logger.warning(f"RAG refresh after delete failed: {_e}")
         

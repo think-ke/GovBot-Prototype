@@ -75,13 +75,14 @@ This plan breaks the requirements into executable tasks and sub-tasks, ordered b
   - **T5.3** ⏳ Add integration tests verifying bots surface new content within SLA.
 
 ### T6 – Collection Management Performance & Bulk Operations
+- **Status:** 🛠️ In Progress
 - **Depends on:** T5
 - **Linked requirements:** R3
 - **Purpose:** Allow high-volume collection (“business”) creation without blocking the API.
 - **Sub-tasks:**
-  - **T6.1** Implement bulk-create endpoint or batching logic that performs a single cache refresh per request.
-  - **T6.2** Make cache refresh incremental so only affected collections reload.
-  - **T6.3** Load-test collection creation to validate throughput and latency targets.
+  - **T6.1** ✅ Implement bulk-create endpoint or batching logic that performs a single cache refresh per request.
+  - **T6.2** ✅ Make cache refresh incremental so only affected collections reload.
+  - **T6.3** ⏳ Load-test collection creation to validate throughput and latency targets.
 
 ## Phase 4 – Visibility & UX Enhancements
 
