@@ -49,7 +49,7 @@ Deprecated==1.2.18
 dirtyjson==1.0.8
 distro==1.9.0
 durationpy==0.10
-en_core_web_lg @ https://github.com/explosion/spacy-models/releases/download/en_core_web_lg-3.8.0/en_core_web_lg-3.8.0-py3-none-any.whl#sha256=293e9547a655b25499198ab15a525b05b9407a75f10255e405e8c3854329ab63
+en_core_web_lg@ https://github.com/explosion/spacy-models/releases/download/en_core_web_lg-3.8.0/en_core_web_lg-3.8.0-py3-none-any.whl
 eval_type_backport==0.2.2
 execnet==2.1.1
 executing==2.2.0
@@ -283,3 +283,6 @@ yarl==1.20.0
 zipp==3.21.0
 zope.event==5.0
 zope.interface==7.2
+chainlit
+httpx
+python-dotenv
