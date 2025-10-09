@@ -13,16 +13,10 @@ import pandas as pd
 from docx import Document as DocxDocument
 from pypdf import PdfReader
 
-try:  # pragma: no cover - optional dependency
-    import textract
-except ImportError:  # pragma: no cover - handled at runtime
-    textract = None  # type: ignore[assignment]
-
 logger = logging.getLogger(__name__)
 
 SUPPORTED_DOCUMENT_EXTENSIONS: Tuple[str, ...] = (
     ".csv",
-    ".doc",
     ".docx",
     ".md",
     ".pdf",
@@ -48,19 +42,6 @@ def _parse_pdf(path: Path) -> Tuple[str, Dict[str, Any]]:
         texts.append(extracted)
     metadata = {"page_count": len(reader.pages)}
     return _normalize_text(texts), metadata
-
-
-def _parse_doc(path: Path) -> Tuple[str, Dict[str, Any]]:
-    if textract is None:
-        raise DocumentParseError(
-            "Parsing .doc files requires the optional 'textract' dependency and system tooling."
-        )
-    try:
-        raw_bytes = textract.process(str(path))  # type: ignore[union-attr]
-    except Exception as exc:  # pragma: no cover - dependent on system binaries
-        raise DocumentParseError(f"Failed to parse legacy Word document: {exc}") from exc
-    text = raw_bytes.decode("utf-8", errors="ignore")
-    return text.strip(), {}
 
 
 def _parse_docx(path: Path) -> Tuple[str, Dict[str, Any]]:
@@ -104,7 +85,6 @@ def _parse_excel(path: Path) -> Tuple[str, Dict[str, Any]]:
 
 _PARSERS = {
     ".pdf": _parse_pdf,
-    ".doc": _parse_doc,
     ".docx": _parse_docx,
     ".txt": _parse_text_file,
     ".md": _parse_markdown,

@@ -1115,8 +1115,12 @@ async def fetch_webpage(
 
 @webpage_router.get("/", response_model=List[WebpageResponse])
 async def list_webpages(
-    skip: int = 0,
-    limit: int = 50,
+    skip: int = Query(0, ge=0),
+    limit: int = Query(50, ge=1, le=1000),
+    collection_id: Optional[str] = Query(
+        default=None,
+        description="Filter webpages by collection ID"
+    ),
     db: AsyncSession = Depends(get_db),
     api_key_info: APIKeyInfo = Depends(require_read_permission)
 ):
@@ -1133,7 +1137,15 @@ async def list_webpages(
         List of webpage data
     """
     try:
-        query = select(Webpage).offset(skip).limit(limit)
+        query = select(Webpage)
+
+        if collection_id:
+            normalized_collection = collection_id.strip()
+            if normalized_collection:
+                query = query.where(Webpage.collection_id == normalized_collection)
+
+        query = query.order_by(Webpage.last_crawled.desc(), Webpage.id.desc())
+        query = query.offset(skip).limit(limit)
         result = await db.execute(query)
         webpages = result.scalars().all()
         return [

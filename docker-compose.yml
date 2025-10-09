@@ -242,4 +242,4 @@ volumes:
 
 networks:
   govstack-net:
-    name: govstack-network
+    name: govstack-net

@@ -76,7 +76,7 @@ DEFAULT_SETTINGS = {
     "verify_ssl": False,               # Whether to verify SSL certificates
     "max_content_length": 5 * 1024 * 1024,  # Maximum content length in bytes (5MB)
     "file_extensions_to_skip": [      # File extensions to skip
-        ".pdf", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx",
+        ".pdf", ".docx", ".xls", ".xlsx", ".ppt", ".pptx",
         ".zip", ".rar", ".7z", ".tar", ".gz", ".jpg", ".jpeg", 
         ".png", ".gif", ".bmp", ".svg", ".mp3", ".mp4", ".avi", 
         ".mov", ".wmv", ".flv", ".exe", ".dll", ".so", ".jar"

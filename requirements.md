@@ -12,11 +12,11 @@ Expand document ingestion beyond PDFs to support additional office formats witho
 
 ### Current Gaps
 - Upload endpoint (`app/api/fast_api_app.py::upload_document`) accepts any file but `SimpleDirectoryReader` in `download_and_process_documents` only processes `.pdf`, `.docx`, `.txt`, `.md`.
-- Unsupported formats (e.g., `.doc`, `.xls/.xlsx`, `.csv`) are silently dropped during indexing, leaving users unaware of failures.
+- Legacy formats such as `.doc` currently require manual conversion to `.docx`, creating friction and inconsistent ingestion results.
 - The API buffers entire files in memory during upload, risking memory pressure for large batches.
 
 ### In Scope
-- Accept, convert, and index Word (`.doc`, `.docx`), Excel (`.xls`, `.xlsx`), CSV, plain text, markdown, and PDF.
+- Accept, convert, and index Word (`.docx`), Excel (`.xls`, `.xlsx`), CSV, plain text, markdown, and PDF.
 - Provide user-facing validation errors for unsupported or corrupted files.
 - Preserve document metadata and link processed artifacts to collections/embeddings.
 
