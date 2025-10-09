@@ -19,7 +19,7 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.future import select
 import uvicorn
 from pydantic import BaseModel, HttpUrl, Field, validator
-from typing import List, Optional, Dict, Any, Union, cast
+from typing import List, Optional, Dict, Any, Union, Literal, cast
 from contextlib import asynccontextmanager
 from starlette.concurrency import run_in_threadpool
 
@@ -169,6 +169,10 @@ app = FastAPI(
             "description": "Collection statistics and management",
         },
         {
+            "name": "Indexing",
+            "description": "Manual indexing controls for documents and webpages",
+        },
+        {
             "name": "Audit",
             "description": "Audit trail and activity logging",
         },
@@ -247,6 +251,12 @@ collection_router = APIRouter(
     responses={404: {"description": "Not found"}},
 )
 
+indexing_router = APIRouter(
+    prefix="/indexing",
+    tags=["Indexing"],
+    responses={404: {"description": "Not found"}},
+)
+
 # Core endpoints
 @core_router.get("/")
 async def root():
@@ -276,6 +286,7 @@ async def upload_document(
     description: str = Form(None),
     is_public: bool = Form(False),
     collection_id: str = Form(...),
+    index_on_upload: bool = Form(True, description="Set to false to skip immediate indexing"),
     db: AsyncSession = Depends(get_db),
     api_key_info: APIKeyInfo = Depends(require_write_permission)
 ):
@@ -345,22 +356,25 @@ async def upload_document(
                 "filename": file.filename,
                 "size": file_size,
                 "collection_id": collection_id,
-                "is_public": is_public
+                "is_public": is_public,
+                "index_on_upload": index_on_upload,
             },
             request=request,
             api_key_name=api_key_info.name
         )
         
-        document_id_value = cast(Optional[int], document.id)
-        index_job_id = register_document_index_job(
-            normalized_collection_id,
-            document_ids=[document_id_value] if document_id_value is not None else None,
-        )
-        background_tasks.add_task(
-            start_background_document_indexing,
-            normalized_collection_id,
-            index_job_id,
-        )
+        index_job_id: Optional[str] = None
+        if index_on_upload:
+            document_id_value = cast(Optional[int], document.id)
+            index_job_id = register_document_index_job(
+                normalized_collection_id,
+                document_ids=[document_id_value] if document_id_value is not None else None,
+            )
+            background_tasks.add_task(
+                start_background_document_indexing,
+                normalized_collection_id,
+                index_job_id,
+            )
 
         # Generate access URL
         access_url = minio_client.get_presigned_url(object_name)
@@ -369,6 +383,7 @@ async def upload_document(
         result = document.to_dict()
         result["access_url"] = access_url
         result["index_job_id"] = index_job_id
+        result["indexing_scheduled"] = bool(index_on_upload and index_job_id)
 
         return result
     
@@ -821,6 +836,22 @@ class CollectionIndexingStatusResponse(BaseModel):
     documents: IndexingBreakdown
     webpages: IndexingBreakdown
     combined: Dict[str, Any]  # Contains total, indexed, unindexed, progress_percent
+
+
+class ManualIndexRequest(BaseModel):
+    """Request payload for manually triggering indexing."""
+    target_type: Literal["document", "webpage"]
+    target_id: int = Field(..., ge=1)
+
+
+class ManualIndexResponse(BaseModel):
+    """Response payload for manual indexing requests."""
+    target_type: Literal["document", "webpage"]
+    target_id: int
+    collection_id: str
+    status: str
+    index_job_id: Optional[str] = None
+    message: Optional[str] = None
 
 class WebpageLinkResponse(BaseModel):
     """Response model for webpage link data."""
@@ -1457,6 +1488,145 @@ async def recrawl_webpage(
         logger.error(f"Error marking webpage for recrawl: {e}")
         raise HTTPException(status_code=500, detail=f"Error marking webpage for recrawl: {str(e)}")
 
+
+@indexing_router.post(
+    "/trigger",
+    response_model=ManualIndexResponse,
+    status_code=202,
+    summary="Trigger manual indexing",
+    description="Schedule background indexing for a single document or webpage.",
+    responses={
+        202: {"description": "Indexing scheduled successfully"},
+        400: {"description": "Invalid request"},
+        403: {"description": "Insufficient permissions"},
+        404: {"description": "Resource not found"},
+        500: {"description": "Internal server error"},
+    },
+)
+async def trigger_manual_indexing(
+    payload: ManualIndexRequest,
+    background_tasks: BackgroundTasks,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    api_key_info: APIKeyInfo = Depends(require_write_permission),
+) -> ManualIndexResponse:
+    """Allow clients to manually start indexing for a document or webpage."""
+
+    try:
+        if payload.target_type == "document":
+            document = await db.get(Document, payload.target_id)
+            if not document:
+                raise HTTPException(status_code=404, detail="Document not found")
+
+            collection_value = (cast(Optional[str], document.collection_id) or "").strip()
+            if not collection_value:
+                raise HTTPException(status_code=400, detail="Document is not associated with a collection")
+
+            document.is_indexed = False
+            document.indexed_at = None
+            document.updated_by = api_key_info.get_user_id()
+            await db.commit()
+            await db.refresh(document)
+
+            try:
+                delete_embeddings_for_doc(collection_id=collection_value, doc_id=str(payload.target_id))
+            except Exception as cleanup_error:
+                logger.warning(
+                    "Failed to remove existing embeddings for document %s in collection %s: %s",
+                    payload.target_id,
+                    collection_value,
+                    cleanup_error,
+                )
+
+            job_id = register_document_index_job(
+                collection_value,
+                document_ids=[payload.target_id],
+            )
+            background_tasks.add_task(
+                start_background_document_indexing,
+                collection_value,
+                job_id,
+            )
+
+            await log_audit_action(
+                user_id=api_key_info.get_user_id(),
+                action="index",
+                resource_type="document",
+                resource_id=str(payload.target_id),
+                details={
+                    "manual_trigger": True,
+                    "collection_id": collection_value,
+                    "index_job_id": job_id,
+                },
+                request=request,
+                api_key_name=api_key_info.name,
+            )
+
+            return ManualIndexResponse(
+                target_type="document",
+                target_id=payload.target_id,
+                collection_id=collection_value,
+                status="queued",
+                index_job_id=job_id,
+                message="Document indexing job queued",
+            )
+
+        if payload.target_type == "webpage":
+            webpage = await db.get(Webpage, payload.target_id)
+            if not webpage:
+                raise HTTPException(status_code=404, detail="Webpage not found")
+
+            collection_value = (cast(Optional[str], webpage.collection_id) or "").strip()
+            if not collection_value:
+                raise HTTPException(status_code=400, detail="Webpage is not associated with a collection")
+
+            webpage.is_indexed = False
+            webpage.indexed_at = None
+            await db.commit()
+            await db.refresh(webpage)
+
+            try:
+                delete_embeddings_for_doc(collection_id=collection_value, doc_id=str(payload.target_id))
+            except Exception as cleanup_error:
+                logger.warning(
+                    "Failed to remove existing embeddings for webpage %s in collection %s: %s",
+                    payload.target_id,
+                    collection_value,
+                    cleanup_error,
+                )
+
+            background_tasks.add_task(start_background_indexing, collection_value)
+
+            await log_audit_action(
+                user_id=api_key_info.get_user_id(),
+                action="index",
+                resource_type="webpage",
+                resource_id=str(payload.target_id),
+                details={
+                    "manual_trigger": True,
+                    "collection_id": collection_value,
+                },
+                request=request,
+                api_key_name=api_key_info.name,
+            )
+
+            return ManualIndexResponse(
+                target_type="webpage",
+                target_id=payload.target_id,
+                collection_id=collection_value,
+                status="queued",
+                index_job_id=None,
+                message="Webpage indexing job queued",
+            )
+
+        raise HTTPException(status_code=400, detail="Unsupported target type for indexing")
+
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error("Error scheduling manual indexing: %s", exc)
+        raise HTTPException(status_code=500, detail=f"Error scheduling indexing: {exc}")
+
 # Indexing progress endpoints
 @document_router.get("/indexing-status", 
                     response_model=Dict[str, Any],
@@ -2015,6 +2185,7 @@ app.include_router(document_router)
 app.include_router(crawler_router)
 app.include_router(webpage_router)
 app.include_router(collection_router)
+app.include_router(indexing_router)
 
 if __name__ == "__main__":
     import os
