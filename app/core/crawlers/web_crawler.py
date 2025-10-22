@@ -38,6 +38,7 @@ from sqlalchemy.ext.asyncio import create_async_engine
 
 from app.db.models.webpage import Webpage, WebpageLink
 from llama_index.core.tools import FunctionTool
+from starlette.concurrency import run_in_threadpool
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -388,9 +389,9 @@ class WebCrawler:
                     logger.info(f"Created new webpage record with ID: {webpage.id} for URL: {url}")
                 except Exception as e:
                     logger.error(f"Database error when committing webpage {url}: {str(e)}")
-                    raise
-            else:
-                logger.info(f"Found existing webpage record with ID: {webpage.id} for URL: {url}")
+                    try:
+                        import socket
+                        ip = await run_in_threadpool(socket.gethostbyname, domain)
             
             return webpage
         except Exception as e:
@@ -402,7 +403,7 @@ class WebCrawler:
         Add a link between webpages in the database.
         """
         link = WebpageLink(
-            source_id=source_id,
+                            answer = await run_in_threadpool(resolver.resolve, domain, 'A')
             target_id=target_id,
             text=text,
             rel=rel
@@ -505,9 +506,10 @@ class WebCrawler:
                     'Accept': 'text/html,application/xhtml+xml,application/xml',
                     'Accept-Language': 'en-US,en;q=0.9',
                 }
-                
-                # Use the passed requests_session object
-                response = requests_session.get(
+
+                # Offload blocking HTTP call to avoid starving the event loop
+                response = await run_in_threadpool(
+                    requests_session.get,
                     url,
                     headers=headers,
                     timeout=self.settings['timeout'],
@@ -589,7 +591,7 @@ class WebCrawler:
         # Verify domain can be resolved before attempting to crawl
         try:
             import socket
-            ip = socket.gethostbyname(domain)
+            ip = await run_in_threadpool(socket.gethostbyname, domain)
             logger.info(f"DNS resolution successful: {domain} -> {ip}")
         except socket.gaierror as e:
             err_msg = f"DNS resolution failed for domain: {domain} - {e}"
@@ -600,7 +602,7 @@ class WebCrawler:
                 import dns.resolver
                 resolver = dns.resolver.Resolver()
                 resolver.nameservers = ['8.8.8.8', '8.8.4.4']  # Google's public DNS
-                answer = resolver.resolve(domain, 'A')
+                answer = await run_in_threadpool(resolver.resolve, domain, 'A')
                 ip = answer[0].to_text()
                 logger.info(f"Fallback DNS resolution successful: {domain} -> {ip}")
                 # Continue with the crawl since we resolved the domain
@@ -637,7 +639,7 @@ class WebCrawler:
         try:
             from requests.adapters import HTTPAdapter
             from urllib3.util.retry import Retry  # Corrected import
-            
+
             custom_session = requests.Session()
             retry_strategy = Retry(
                 total=self.settings['max_retries'],
@@ -647,11 +649,12 @@ class WebCrawler:
             adapter = HTTPAdapter(max_retries=retry_strategy)
             custom_session.mount("http://", adapter)
             custom_session.mount("https://", adapter)
-            
-            # Test connection before proceeding
-            test_response = custom_session.head(
-                url, 
-                timeout=self.settings['timeout']/2,
+
+            # Test connection before proceeding (offload blocking call)
+            test_response = await run_in_threadpool(
+                custom_session.head,
+                url,
+                timeout=self.settings['timeout'] / 2,
                 verify=self.settings['verify_ssl'],
                 allow_redirects=self.settings['follow_redirects']
             )
@@ -756,6 +759,11 @@ class WebCrawler:
             "end_time": self.end_time.isoformat(),
             "pages_per_second": self.urls_crawled / duration if duration > 0 else 0,
         }
+        if self.errors:
+            stats["error_details"] = [
+                {"url": url, "error": error_msg}
+                for url, error_msg in self.errors
+            ]
         
         logger.info(f"Crawl completed: {stats}")
         return stats
@@ -1030,8 +1038,27 @@ async def crawl_website(seed_url: str, depth: int = 3, concurrent_requests: int 
     if session_maker:
         crawler.session_maker = session_maker
     
-    # Start crawl
-    result = await crawler.crawl(seed_url, strategy=strategy)
+    # Start crawl and ensure network failures are captured as handled errors
+    try:
+        result = await crawler.crawl(seed_url, strategy=strategy)
+    except Exception as crawl_error:
+        logger.exception(
+            "Crawl aborted for %s due to recoverable error", seed_url
+        )
+        error_message = str(crawl_error)
+        now_iso = datetime.now(timezone.utc).isoformat()
+        result = {
+            "seed_urls": [seed_url],
+            "urls_crawled": 0,
+            "urls_queued": 1,
+            "errors": 1,
+            "duration_seconds": 0,
+            "start_time": now_iso,
+            "end_time": now_iso,
+            "pages_per_second": 0,
+            "error_message": error_message,
+            "error_details": [{"url": seed_url, "error": error_message}],
+        }
     
     # Update task status if provided
     if task_status and isinstance(task_status, dict):
@@ -1040,6 +1067,8 @@ async def crawl_website(seed_url: str, depth: int = 3, concurrent_requests: int 
             "total_urls_queued": result.get("urls_queued", 0),
             "errors": result.get("errors", 0)
         })
+        if "error_details" in result:
+            task_status["error_details"] = result["error_details"]
     
     return result
 
@@ -1065,7 +1094,7 @@ if __name__ == "__main__":
             import socket
             domain = get_domain(test_url)
             try:
-                ip = socket.gethostbyname(domain)
+                ip = await run_in_threadpool(socket.gethostbyname, domain)
                 print(f"DNS resolution successful: {domain} -> {ip}")
             except socket.gaierror as e:
                 print(f"DNS resolution failed: {e}")

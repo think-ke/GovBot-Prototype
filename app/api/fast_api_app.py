@@ -882,6 +882,8 @@ class CrawlStatusResponse(BaseModel):
     start_time: Optional[str] = None
     finished: bool = False
     collection_id: Optional[str] = None
+    error_message: Optional[str] = None
+    error_details: Optional[List[Dict[str, str]]] = None
 
 class CollectionTextRequest(BaseModel):
     """Request model for extracting texts from a collection."""
@@ -931,6 +933,8 @@ async def start_crawl(
             "collection_id": request_data.collection_id,
             "user_id": api_key_info.get_user_id(),
             "api_key_name": api_key_info.name,
+            "error_message": None,
+            "error_details": [],
         }
         
         # Log audit action for crawl start
@@ -968,10 +972,14 @@ async def start_crawl(
                     api_key_name=api_key_info.name  # Pass API key name for audit trail
                 )
                 # Update task status on completion
+                completion_status = "completed_with_errors" if result.get("errors") else "completed"
                 crawl_tasks[task_id].update({
-                    "status": "completed",
+                    "status": completion_status,
                     "urls_crawled": result.get("urls_crawled", 0),
+                    "total_urls_queued": result.get("urls_queued", crawl_tasks[task_id].get("total_urls_queued", 0)),
                     "errors": result.get("errors", 0),
+                    "error_message": result.get("error_message"),
+                    "error_details": result.get("error_details", []),
                     "finished": True
                 })
                 
@@ -989,15 +997,28 @@ async def start_crawl(
                     api_key_name=api_key_info.name
                 )
                 
-                # Start background indexing for the collection
-                logger.info(f"Crawl completed, starting background indexing for collection '{request_data.collection_id}'")
-                start_background_indexing(request_data.collection_id)
+                # Start background indexing only if we crawled new pages
+                if result.get("urls_crawled", 0) > 0:
+                    logger.info(
+                        "Crawl completed, starting background indexing for collection '%s'",
+                        request_data.collection_id
+                    )
+                    start_background_indexing(request_data.collection_id)
+                else:
+                    logger.info(
+                        "Crawl finished with no pages crawled for collection '%s'; skipping indexing",
+                        request_data.collection_id
+                    )
                 
             except Exception as e:
                 logger.error(f"Error in background crawl task: {str(e)}")
                 crawl_tasks[task_id].update({
                     "status": "failed",
                     "error_message": str(e),
+                    "error_details": [{
+                        "url": str(request_data.url),
+                        "error": str(e)
+                    }],
                     "finished": True
                 })
                 
@@ -1024,7 +1045,9 @@ async def start_crawl(
             seed_urls=crawl_tasks[task_id]["seed_urls"],
             start_time=crawl_tasks[task_id]["start_time"],
             finished=False,
-            collection_id=request_data.collection_id
+            collection_id=request_data.collection_id,
+            error_message=crawl_tasks[task_id]["error_message"],
+            error_details=crawl_tasks[task_id]["error_details"]
         )
         
     except Exception as e:
@@ -1070,7 +1093,9 @@ async def get_crawl_status(
         errors=task_status.get("errors"),
         start_time=task_status.get("start_time"),
         finished=task_status.get("finished", False),
-        collection_id=task_status.get("collection_id")
+        collection_id=task_status.get("collection_id"),
+        error_message=task_status.get("error_message"),
+        error_details=task_status.get("error_details")
     )
 
 @crawler_router.get("/", response_model=List[CrawlStatusResponse])
@@ -1097,7 +1122,9 @@ async def list_crawl_jobs(
                 errors=status.get("errors"),
                 start_time=status.get("start_time"),
                 finished=status.get("finished", False),
-                collection_id=status.get("collection_id")
+                collection_id=status.get("collection_id"),
+                error_message=status.get("error_message"),
+                error_details=status.get("error_details")
             ))
 
         # Optionally, sort by start_time descending when available

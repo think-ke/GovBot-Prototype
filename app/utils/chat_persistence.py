@@ -6,6 +6,7 @@ from datetime import datetime, timezone, timedelta
 from typing import Dict, List, Optional, Any, Union
 from sqlalchemy import select, update, and_, delete
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.exc import IntegrityError
 from uuid import uuid4
 import uuid
 from pydantic_core import to_jsonable_python
@@ -70,12 +71,31 @@ class ChatPersistenceService:
             updated_at=datetime.now(timezone.utc)
         )
         
-        db.add(chat)
-        await db.commit()
-        await db.refresh(chat)
-        
-        logger.info(f"Created new chat session with provided ID: {session_id}")
-        return session_id
+        try:
+            db.add(chat)
+            await db.commit()
+            await db.refresh(chat)
+            logger.info(f"Created new chat session with provided ID: {session_id}")
+            return session_id
+        except IntegrityError:
+            # Another request created the same session concurrently
+            await db.rollback()
+            existing_chat = await ChatPersistenceService.get_chat_by_session_id(db, session_id)
+            if existing_chat is None:
+                # The error was not caused by a duplicate session; re-raise for visibility
+                raise
+
+            # Optionally link the user_id if it was missing previously
+            if user_id and not existing_chat.user_id:
+                setattr(existing_chat, "user_id", user_id)
+                setattr(existing_chat, "updated_at", datetime.now(timezone.utc))
+                await db.commit()
+
+            logger.info(
+                "Session %s already exists; returning existing session instead of creating a new one",
+                session_id,
+            )
+            return existing_chat.session_id
 
     @staticmethod
     async def get_chat_by_session_id(db: AsyncSession, session_id: str) -> Optional[Chat]:
