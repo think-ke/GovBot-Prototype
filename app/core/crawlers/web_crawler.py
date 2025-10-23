@@ -389,9 +389,7 @@ class WebCrawler:
                     logger.info(f"Created new webpage record with ID: {webpage.id} for URL: {url}")
                 except Exception as e:
                     logger.error(f"Database error when committing webpage {url}: {str(e)}")
-                    try:
-                        import socket
-                        ip = await run_in_threadpool(socket.gethostbyname, domain)
+                    await session.rollback()
             
             return webpage
         except Exception as e:
@@ -403,7 +401,7 @@ class WebCrawler:
         Add a link between webpages in the database.
         """
         link = WebpageLink(
-                            answer = await run_in_threadpool(resolver.resolve, domain, 'A')
+            source_id=source_id,
             target_id=target_id,
             text=text,
             rel=rel
