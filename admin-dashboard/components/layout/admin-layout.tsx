@@ -1,6 +1,42 @@
 "use client"
 
+import { 
+  BuildingOfficeIcon,
+  HomeIcon,
+  DocumentTextIcon,
+  GlobeAltIcon,
+  ChartBarIcon
+} from '@heroicons/react/24/outline'
+
 export function AdminLayout({ children }: { children: React.ReactNode }) {
+  const navigation = [
+    {
+      name: 'Agencies',
+      href: '/agencies',
+      icon: BuildingOfficeIcon,
+    },
+    {
+      name: 'Dashboard',
+      href: '/',
+      icon: HomeIcon,
+    },
+    {
+      name: 'Documents',
+      href: '/documents',
+      icon: DocumentTextIcon,
+    },
+    {
+      name: 'Websites',
+      href: '/websites',
+      icon: GlobeAltIcon,
+    },
+    {
+      name: 'Analytics',
+      href: '/analytics',
+      icon: ChartBarIcon,
+    },
+  ]
+
   return (
     <div className="min-h-screen bg-background">
       <div className="flex h-screen">
@@ -10,21 +46,11 @@ export function AdminLayout({ children }: { children: React.ReactNode }) {
             <h1 className="text-lg font-semibold">Admin Dashboard</h1>
           </div>
           <nav className="space-y-2 p-4">
-            <a href="/" className="flex items-center space-x-2 rounded-lg px-3 py-2 text-sm font-medium hover:bg-accent">
-              <span>📊 Dashboard</span>
-            </a>
-            <a href="/documents" className="flex items-center space-x-2 rounded-lg px-3 py-2 text-sm font-medium hover:bg-accent">
-              <span>📄 Documents</span>
-            </a>
-            <a href="/websites" className="flex items-center space-x-2 rounded-lg px-3 py-2 text-sm font-medium hover:bg-accent">
-              <span>🌐 Websites</span>
-            </a>
-            <a href="/collections" className="flex items-center space-x-2 rounded-lg px-3 py-2 text-sm font-medium hover:bg-accent">
-              <span>📁 Collections</span>
-            </a>
-            <a href="/analytics" className="flex items-center space-x-2 rounded-lg px-3 py-2 text-sm font-medium hover:bg-accent">
-              <span>📈 Analytics</span>
-            </a>
+            {navigation.map((item) => (
+              <a key={item.name} href={item.href} className="flex items-center space-x-2 rounded-lg px-3 py-2 text-sm font-medium hover:bg-accent">
+                <span>{item.name}</span>
+              </a>
+            ))}
           </nav>
         </div>
         
@@ -32,7 +58,7 @@ export function AdminLayout({ children }: { children: React.ReactNode }) {
         <div className="flex-1">
           <header className="border-b">
             <div className="flex h-14 items-center px-6">
-              <h2 className="text-lg font-semibold">GovStack Admin</h2>
+              <h2 className="text-lg font-semibold">GovBot Admin</h2>
             </div>
           </header>
           <main className="p-6">

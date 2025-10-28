@@ -1,23 +1,31 @@
 "use client"
 
-import { useState, useEffect } from 'react'
-import { apiClient } from '@/lib/api-client'
-import { Document } from '@/lib/types'
+import { useState, useEffect } from "react"
+import { apiClient } from "@/lib/api-client"
+
+import { Document } from "@/lib/types"
+
+
+export interface Collection {
+  id: string
+  name: string
+  document_count: number
+}
 
 export function DocumentManager() {
   const [documents, setDocuments] = useState<Document[]>([])
   const [isUploading, setIsUploading] = useState(false)
-  const [collectionId, setCollectionId] = useState('')
-  const [collections, setCollections] = useState<any[]>([])
-  const [selectedCollection, setSelectedCollection] = useState('')
+  const [collectionId, setCollectionId] = useState("")
+  const [collections, setCollections] = useState<Collection[]>([])
+  const [selectedCollection, setSelectedCollection] = useState("")
   const [loading, setLoading] = useState(false)
 
-  // Load collections on component mount
+  // 🔹 Load collections on component mount
   useEffect(() => {
     loadCollections()
   }, [])
 
-  // Load documents when collection changes
+  // 🔹 Load documents when collection changes
   useEffect(() => {
     if (selectedCollection) {
       loadDocumentsByCollection(selectedCollection)
@@ -26,96 +34,101 @@ export function DocumentManager() {
     }
   }, [selectedCollection])
 
+  // 🔹 Load all collections
   const loadCollections = async () => {
     try {
       const collectionsData = await apiClient.getCollections()
-      setCollections(collectionsData)
+      setCollections(collectionsData || [])
     } catch (error) {
-      console.error('Failed to load collections:', error)
+      console.error("Failed to load collections:", error)
     }
   }
 
+  // 🔹 Load all documents
   const loadAllDocuments = async () => {
     setLoading(true)
     try {
-      const documentsData = await apiClient.getDocuments({ limit: 100 })
-      setDocuments(documentsData)
+      
     } catch (error) {
-      console.error('Failed to load documents:', error)
+      console.error("Failed to load documents:", error)
     } finally {
       setLoading(false)
     }
   }
 
+  // 🔹 Load documents by collection
   const loadDocumentsByCollection = async (collectionId: string) => {
     setLoading(true)
     try {
       const documentsData = await apiClient.getDocumentsByCollection(collectionId, { limit: 100 })
-      setDocuments(documentsData)
+      setDocuments(documentsData || [])
     } catch (error) {
-      console.error('Failed to load documents by collection:', error)
+      console.error("Failed to load documents by collection:", error)
     } finally {
       setLoading(false)
     }
   }
 
+  // 🔹 Handle upload
   const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const files = event.target.files
     if (!files || files.length === 0) return
-    
+
     if (!collectionId.trim()) {
-      alert('Collection ID is required')
+      alert("Collection ID is required")
       return
     }
 
     setIsUploading(true)
-    
+
     try {
-      const uploadPromises = Array.from(files).map(file =>
+      const uploadPromises = Array.from(files).map((file) =>
         apiClient.uploadDocument(file, {
           collection_id: collectionId,
           description: `Uploaded file: ${file.name}`,
-          is_public: false
+          is_public: false,
         })
       )
 
       const uploadedDocuments = await Promise.all(uploadPromises)
-      
-      // Refresh documents list
+
+      // Refresh document list
       if (selectedCollection) {
         await loadDocumentsByCollection(selectedCollection)
       } else {
         await loadAllDocuments()
       }
-      
-      console.log('Files uploaded successfully:', uploadedDocuments)
+
+      console.log("Files uploaded successfully:", uploadedDocuments)
     } catch (error) {
-      console.error('Upload failed:', error)
-      alert('Upload failed. Please try again.')
+      console.error("Upload failed:", error)
+      alert("Upload failed. Please try again.")
     } finally {
       setIsUploading(false)
     }
   }
 
+  // 🔹 Handle delete
   const handleDeleteDocument = async (documentId: number) => {
-    if (!confirm('Are you sure you want to delete this document?')) return
+    if (!confirm("Are you sure you want to delete this document?")) return
 
     try {
       await apiClient.deleteDocument(documentId)
-      // Refresh documents list
+      // Refresh document list
       if (selectedCollection) {
         await loadDocumentsByCollection(selectedCollection)
       } else {
         await loadAllDocuments()
       }
     } catch (error) {
-      console.error('Failed to delete document:', error)
-      alert('Failed to delete document. Please try again.')
+      console.error("Failed to delete document:", error)
+      alert("Failed to delete document. Please try again.")
     }
   }
 
   return (
     <div className="space-y-6">
+      {/* Header */}
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-3xl font-bold">Document Management</h1>
@@ -131,13 +144,13 @@ export function DocumentManager() {
               disabled={isUploading}
             />
             <span className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:opacity-50">
-              {isUploading ? 'Uploading...' : 'Upload Documents'}
+              {isUploading ? "Uploading..." : "Upload Documents"}
             </span>
           </label>
         </div>
       </div>
 
-      {/* Collection selector */}
+      {/* Collection Filter */}
       <div className="mb-4">
         <label htmlFor="collection-filter" className="block text-sm font-medium text-gray-700 mb-2">
           Filter by Collection
@@ -192,7 +205,7 @@ export function DocumentManager() {
         </div>
       </div>
 
-      {/* Upload area */}
+      {/* Upload Drop Area */}
       <div className="border-2 border-dashed border-gray-300 rounded-lg p-8 text-center">
         <div className="space-y-4">
           <div className="flex justify-center">
@@ -216,51 +229,54 @@ export function DocumentManager() {
         </div>
       </div>
 
-      {/* Documents list */}
+      {/* Documents List */}
       <div className="rounded-lg border bg-card">
         <div className="p-6">
           <div className="flex items-center justify-between mb-4">
             <h3 className="text-lg font-semibold">
-              Documents 
-              {selectedCollection && ` in ${collections.find(c => c.id === selectedCollection)?.name || selectedCollection}`}
+              Documents{" "}
+              {selectedCollection &&
+                `in ${collections.find((c) => c.id === selectedCollection)?.name || selectedCollection}`}
               {documents.length > 0 && ` (${documents.length})`}
             </h3>
             {loading && <div className="text-sm text-muted-foreground">Loading...</div>}
           </div>
+
           {documents.length === 0 ? (
             <div className="text-center py-8">
               <p className="text-muted-foreground">
-                {selectedCollection ? 'No documents in this collection' : 'No documents uploaded yet'}
+                {selectedCollection ? "No documents in this collection" : "No documents uploaded yet"}
               </p>
               <p className="text-sm text-muted-foreground">Upload your first document to get started</p>
             </div>
           ) : (
             <div className="space-y-2">
-              {documents.map((doc: Document) => (
+              {documents.map((doc) => (
                 <div key={doc.id} className="flex items-center justify-between p-3 border rounded-lg">
                   <div className="flex items-center space-x-3">
                     <div className="w-8 h-8 bg-blue-100 rounded flex items-center justify-center">
                       <span className="text-blue-600 text-sm">📄</span>
                     </div>
                     <div>
-                      <p className="font-medium">{doc.filename}</p>
+                      <p className="font-medium">{doc.name}</p>
                       <p className="text-sm text-muted-foreground">
-                        {(doc.size / 1024).toFixed(1)} KB • {doc.content_type}
+                        {(doc.size / 1024).toFixed(2)} KB • Type: {doc.type}
                       </p>
                       <p className="text-xs text-muted-foreground">
-                        Collection: {doc.collection_id} • Uploaded: {new Date(doc.upload_date).toLocaleDateString()}
+                        Collection: {doc.collection_id} • Uploaded:{" "}
+                        {new Date(doc.uploaded_at).toLocaleDateString()}
                       </p>
                     </div>
                   </div>
                   <div className="flex items-center space-x-2">
-                    <button 
-                      onClick={() => window.open(`/documents/${doc.id}`, '_blank')}
+                    <button
+                      onClick={() => window.open(`/documents/${doc.id}`, "_blank")}
                       className="text-sm text-blue-600 hover:text-blue-700"
                     >
                       View
                     </button>
-                    <button 
-                      onClick={() => handleDeleteDocument(doc.id)}
+                    <button
+                      onClick={() => handleDeleteDocument(Number(doc.id))}
                       className="text-sm text-red-600 hover:text-red-700"
                     >
                       Delete

@@ -1,6 +1,6 @@
-# GovStack Admin Dashboard
+# GovBot Admin Dashboard
 
-A comprehensive administrative interface for managing documents, websites, and content collections in the GovStack AI-powered eCitizen Services platform.
+This admin dashboard is the web UI for GovBot (previously "GovStack") content and analytics management.
 
 ## Features
 

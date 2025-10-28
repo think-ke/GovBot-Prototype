@@ -1,7 +1,9 @@
+"use client"
+
 import { MetricCard } from "./metric-card"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
-import { MessageSquare, FileText, Target, TrendingDown, Brain, Search, Users, CheckCircle, Loader2 } from "lucide-react"
+import { MessageSquare, FileText, Target, TrendingDown, Brain, Search, CheckCircle, Loader2 } from "lucide-react"
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, ResponsiveContainer, LineChart, Line } from "recharts"
 import { useEffect, useState } from "react"
 import {
@@ -19,102 +21,122 @@ import {
   fetchKnowledgeGaps
 } from "@/lib/analytics-api"
 
-// Mock data for demonstration
-const conversationFlowData = [
-  { turn: 1, completion: 95, abandonment: 5 },
-  { turn: 2, completion: 88, abandonment: 12 },
-  { turn: 3, completion: 82, abandonment: 18 },
-  { turn: 4, completion: 76, abandonment: 24 },
-  { turn: 5, completion: 70, abandonment: 30 },
-  { turn: 6, completion: 65, abandonment: 35 },
+// ------------------------------------------------------------------
+// Mock / Fallback Data
+// ------------------------------------------------------------------
+const mockIntents = [
+  { intent: "document_request", frequency: 485, containment_rate: 94.2, avg_duration: 2.8 },
+  { intent: "general_inquiry", frequency: 320, containment_rate: 88.5, avg_duration: 3.2 },
+  { intent: "form_assistance", frequency: 280, containment_rate: 91.8, avg_duration: 4.1 },
+  { intent: "status_check", frequency: 245, containment_rate: 96.1, avg_duration: 2.1 },
+  { intent: "complaint_handling", frequency: 180, containment_rate: 76.3, avg_duration: 5.2 },
 ]
 
-const sentimentTrendsData = [
-  { week: "Week 1", positive: 72, neutral: 22, negative: 6 },
-  { week: "Week 2", positive: 74, neutral: 21, negative: 5 },
-  { week: "Week 3", positive: 73, neutral: 22, negative: 5 },
-  { week: "Week 4", positive: 75, neutral: 20, negative: 5 },
+const mockDocuments = [
+  { document_id: "1", title: "Forms & Applications", retrieval_count: 342, success_rate: 94.2 },
+  { document_id: "2", title: "Policy Documents", retrieval_count: 285, success_rate: 91.8 },
+  { document_id: "3", title: "Service Guidelines", retrieval_count: 220, success_rate: 88.5 },
+  { document_id: "4", title: "FAQ Responses", retrieval_count: 195, success_rate: 96.1 },
+  { document_id: "5", title: "Legal Documents", retrieval_count: 145, success_rate: 85.2 },
+]
+
+const mockDropOffs = [
+  { step: "Initial Query", dropoffs: 50, total_visits: 1000 },
+  { step: "First Response", dropoffs: 70, total_visits: 950 },
+  { step: "Follow-up", dropoffs: 60, total_visits: 880 },
+  { step: "Resolution", dropoffs: 60, total_visits: 820 },
+  { step: "Completion", dropoffs: 60, total_visits: 760 },
+]
+
+const mockSentiment = [
+  { date: "2025-10-01", positive: 72, neutral: 22, negative: 6 },
+  { date: "2025-10-08", positive: 74, neutral: 21, negative: 5 },
+  { date: "2025-10-15", positive: 73, neutral: 22, negative: 5 },
+  { date: "2025-10-22", positive: 75, neutral: 20, negative: 5 },
+]
+
+const mockKnowledgeGaps = [
+  { query: "How to apply for digital ID?", frequency: 45, suggested_intent: "document_request" },
+  { query: "Appeal rejected application", frequency: 32, suggested_intent: "appeal_process" },
+  { query: "Emergency contact numbers", frequency: 28, suggested_intent: "emergency_services" },
+  { query: "Can I pay online?", frequency: 24, suggested_intent: "payment_methods" },
 ]
 
 export function ConversationAnalyticsDashboard() {
-  // State for API data
   const [conversationFlows, setConversationFlows] = useState<ConversationFlow[]>([])
   const [intentData, setIntentData] = useState<IntentAnalysis[]>([])
   const [documentData, setDocumentData] = useState<DocumentRetrieval[]>([])
-  const [dropOffData, setDropOffData] = useState<DropOffData | null>(null)
-  const [sentimentData, setSentimentData] = useState<SentimentTrends | null>(null)
-  const [knowledgeGaps, setKnowledgeGaps] = useState<KnowledgeGaps | null>(null)
+  const [dropOffData, setDropOffData] = useState<DropOffData[]>([])
+  const [sentimentData, setSentimentData] = useState<SentimentTrends[]>([])
+  const [knowledgeGaps, setKnowledgeGaps] = useState<KnowledgeGaps[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
-  // Processed data for charts
-  const [processedSentimentTrends, setProcessedSentimentTrends] = useState<any[]>([])
-  const [processedDropOffPoints, setProcessedDropOffPoints] = useState<any[]>([])
+  const [processedDropOffs, setProcessedDropOffs] = useState<any[]>([])
+  const [processedSentiment, setProcessedSentiment] = useState<any[]>([])
 
-  // Fetch data on component mount
   useEffect(() => {
-    const fetchData = async () => {
+    const fetchAll = async () => {
       try {
         setLoading(true)
         setError(null)
-        
-        const [flowsData, intentsData, documentsData, dropOffsData, sentimentTrendsData, knowledgeGapsData] = await Promise.all([
+
+        const [
+          flows,
+          intents,
+          docs,
+          dropoffs,
+          sentiment,
+          gaps
+        ] = await Promise.all([
           fetchConversationFlows().catch(() => []),
           fetchIntentAnalysis().catch(() => []),
           fetchDocumentRetrieval().catch(() => []),
-          fetchDropOffs().catch(() => null),
-          fetchSentimentTrends().catch(() => null),
-          fetchKnowledgeGaps().catch(() => null)
+          fetchDropOffs().catch(() => []),
+          fetchSentimentTrends().catch(() => []),
+          fetchKnowledgeGaps().catch(() => [])
         ])
 
-        setConversationFlows(flowsData)
-        setIntentData(intentsData)
-        setDocumentData(documentsData)
-        setDropOffData(dropOffsData)
-        setSentimentData(sentimentTrendsData)
-        setKnowledgeGaps(knowledgeGapsData)
+        const finalIntents = intents.length ? intents : mockIntents
+        const finalDocs = docs.length ? docs : mockDocuments
+        const finalDropoffs = dropoffs.length ? dropoffs : mockDropOffs
+        const finalSentiment = sentiment.length ? sentiment : mockSentiment
+        const finalGaps = gaps.length ? gaps : mockKnowledgeGaps
 
-        // Process sentiment data for charts
-        if (sentimentTrendsData) {
-          const weeklyData = [
-            { week: "Week 1", positive: sentimentTrendsData.sentiment_distribution.positive, neutral: sentimentTrendsData.sentiment_distribution.neutral, negative: sentimentTrendsData.sentiment_distribution.negative },
-            { week: "Week 2", positive: sentimentTrendsData.sentiment_distribution.positive + 2, neutral: sentimentTrendsData.sentiment_distribution.neutral - 1, negative: sentimentTrendsData.sentiment_distribution.negative - 1 },
-            { week: "Week 3", positive: sentimentTrendsData.sentiment_distribution.positive + 1, neutral: sentimentTrendsData.sentiment_distribution.neutral, negative: sentimentTrendsData.sentiment_distribution.negative - 1 },
-            { week: "Week 4", positive: sentimentTrendsData.sentiment_distribution.positive, neutral: sentimentTrendsData.sentiment_distribution.neutral + 1, negative: sentimentTrendsData.sentiment_distribution.negative },
-          ]
-          setProcessedSentimentTrends(weeklyData)
-        } else {
-          setProcessedSentimentTrends([])
-        }
+        setConversationFlows(flows)
+        setIntentData(finalIntents)
+        setDocumentData(finalDocs)
+        setDropOffData(finalDropoffs)
+        setSentimentData(finalSentiment)
+        setKnowledgeGaps(finalGaps)
 
-        // Process drop-off data
-        if (dropOffsData && dropOffsData.drop_off_points.length > 0) {
-          const totalUsers = 1000 // Simulated base
-          const processedDropOffs = dropOffsData.drop_off_points.map((point, index) => ({
-            stage: `Turn ${point.turn}`,
-            users: Math.round(totalUsers * (100 - point.abandonment_rate) / 100),
-            percentage: 100 - point.abandonment_rate
-          }))
-          setProcessedDropOffPoints(processedDropOffs)
-        } else {
-          // Mock drop-off data
-          setProcessedDropOffPoints([
-            { stage: "Initial Query", users: 1000, percentage: 100 },
-            { stage: "First Response", users: 950, percentage: 95 },
-            { stage: "Follow-up", users: 880, percentage: 88 },
-            { stage: "Resolution", users: 820, percentage: 82 },
-            { stage: "Completion", users: 760, percentage: 76 },
-          ])
-        }
+        // === Process Drop-offs (Cumulative) ===
+        const startVisits = finalDropoffs[0]?.total_visits ?? 1000
+        let cumulative = startVisits
+        const dropoffPoints = finalDropoffs.map((d, i) => {
+          const remaining = d.total_visits - d.dropoffs
+          const percentage = Math.round((remaining / startVisits) * 100)
+          if (i > 0) cumulative = remaining
+          return { stage: d.step, users: remaining, percentage }
+        })
+        setProcessedDropOffs(dropoffPoints)
 
-      } catch (err) {
-        setError(err instanceof Error ? err.message : 'An error occurred')
+        // === Process Sentiment (Weekly) ===
+        const weekly = finalSentiment.map((s, i) => ({
+          week: `Week ${i + 1}`,
+          positive: s.positive,
+          neutral: s.neutral,
+          negative: s.negative
+        }))
+        setProcessedSentiment(weekly)
+
+      } catch (e) {
+        setError(e instanceof Error ? e.message : "Failed to load data")
       } finally {
         setLoading(false)
       }
     }
-
-    fetchData()
+    fetchAll()
   }, [])
 
   if (loading) {
@@ -128,122 +150,104 @@ export function ConversationAnalyticsDashboard() {
 
   if (error) {
     return (
-      <div className="flex items-center justify-center h-64">
-        <div className="text-center">
-          <p className="text-red-600 mb-2">Error loading conversation analytics</p>
-          <p className="text-sm text-gray-600">{error}</p>
-        </div>
+      <div className="flex items-center justify-center h-64 text-center">
+        <p className="text-red-600 mb-2">Error loading conversation analytics</p>
+        <p className="text-sm text-gray-600">{error}</p>
       </div>
     )
   }
 
+  // === KPI Calculations ===
+  const totalConversations = intentData.reduce((s, i) => s + i.frequency, 0)
+
+  const avgTurns = conversationFlows.length > 0
+    ? conversationFlows.reduce((sum, f) => {
+        const turnMatch = f.step.match(/(\d+)/)
+        const turn = turnMatch ? parseInt(turnMatch[1], 10) : 1
+        return sum + turn
+      }, 0) / conversationFlows.length
+    : 3.2
+
+  const completionRate = conversationFlows.length > 0
+    ? (conversationFlows.reduce((s, f) => s + (100 - f.dropoff_rate), 0) / conversationFlows.length).toFixed(1)
+    : "82.4"
+
+  const docSuccessRate = documentData.length > 0
+    ? (documentData.reduce((s, d) => s + d.success_rate, 0) / documentData.length).toFixed(1)
+    : "91.2"
+
+  const maxFreq = intentData[0]?.frequency || 1
+
   return (
     <div className="space-y-6">
-      {/* Conversation Overview Metrics */}
+
+      {/* KPI Cards */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-        <MetricCard
-          title="Total Conversations"
-          value={intentData.reduce((sum, intent) => sum + intent.frequency, 0) || 2450}
-          change={0}
-          changeLabel="vs last month"
-          icon={<MessageSquare className="w-4 h-4" />}
-          trend="neutral"
-        />
-        <MetricCard
-          title="Avg. Turns per Conversation"
-          value={conversationFlows.length > 0 ? conversationFlows.reduce((sum, flow) => sum + flow.turn_number, 0) / conversationFlows.length : 3.2}
-          change={0}
-          changeLabel="vs last month"
-          icon={<Target className="w-4 h-4" />}
-          trend="neutral"
-        />
-        <MetricCard
-          title="Completion Rate"
-          value={conversationFlows.length > 0 ? `${(conversationFlows.reduce((sum, flow) => sum + flow.completion_rate, 0) / conversationFlows.length).toFixed(1)}%` : "82.4%"}
-          change={0}
-          changeLabel="vs last month"
-          icon={<CheckCircle className="w-4 h-4" />}
-          trend="neutral"
-        />
-        <MetricCard
-          title="Document Retrieval Success"
-          value={documentData.length > 0 ? `${(documentData.reduce((sum, doc) => sum + doc.success_rate, 0) / documentData.length).toFixed(1)}%` : "91.2%"}
-          change={0}
-          changeLabel="vs last month"
-          icon={<FileText className="w-4 h-4" />}
-          trend="neutral"
-        />
+        <MetricCard title="Total Conversations" value={totalConversations} change={0} icon={<MessageSquare className="w-4 h-4" />} trend="neutral" />
+        <MetricCard title="Avg. Turns" value={avgTurns.toFixed(1)} change={0} icon={<Target className="w-4 h-4" />} trend="neutral" />
+        <MetricCard title="Completion Rate" value={`${completionRate}%`} change={0} icon={<CheckCircle className="w-4 h-4" />} trend="neutral" />
+        <MetricCard title="Doc Retrieval Success" value={`${docSuccessRate}%`} change={0} icon={<FileText className="w-4 h-4" />} trend="neutral" />
       </div>
 
-      {/* Intent Analysis and Conversation Flow */}
+      {/* Intents + Flow */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <Card>
           <CardHeader>
-            <CardTitle className="flex items-center space-x-2">
-              <Brain className="w-5 h-5" />
-              <span>Top User Intents</span>
+            <CardTitle className="flex items-center gap-2">
+              <Brain className="w-5 h-5" /> Top Intents
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="space-y-4">
-              {(intentData.length > 0 ? intentData.slice(0, 5) : [
-                { intent: "document_request", frequency: 485, success_rate: 94.2, average_turns: 2.8 },
-                { intent: "general_inquiry", frequency: 320, success_rate: 88.5, average_turns: 3.2 },
-                { intent: "form_assistance", frequency: 280, success_rate: 91.8, average_turns: 4.1 },
-                { intent: "status_check", frequency: 245, success_rate: 96.1, average_turns: 2.1 },
-                { intent: "complaint_handling", frequency: 180, success_rate: 76.3, average_turns: 5.2 },
-              ]).map((intent, index) => (
-                <div key={index} className="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
-                  <div className="flex-1">
-                    <div className="flex justify-between items-center mb-1">
-                      <span className="font-medium capitalize">
-                        {intent.intent.replace(/_/g, ' ')}
-                      </span>
-                      <div className="flex items-center space-x-2">
-                        <Badge variant="secondary">{intent.frequency} requests</Badge>
-                        <Badge className={`${intent.success_rate > 90 ? 'bg-emerald-100 text-emerald-800' : intent.success_rate > 80 ? 'bg-yellow-100 text-yellow-800' : 'bg-red-100 text-red-800'}`}>
-                          {intent.success_rate.toFixed(1)}% success
-                        </Badge>
-                      </div>
-                    </div>
-                    <div className="w-full bg-gray-200 rounded-full h-2">
-                      <div className="bg-blue-600 h-2 rounded-full" style={{ width: `${(intent.frequency / 485) * 100}%` }} />
-                    </div>
-                    <div className="text-xs text-gray-600 mt-1">
-                      Avg. {intent.average_turns.toFixed(1)} turns per conversation
-                    </div>
+            {intentData.slice(0, 5).map((intent, i) => (
+              <div key={i} className="p-3 bg-gray-50 rounded-lg mb-3">
+                <div className="flex justify-between mb-1">
+                  <span className="font-medium capitalize">{intent.intent.replace(/_/g, " ")}</span>
+                  <div className="flex gap-2">
+                    <Badge variant="secondary">{intent.frequency}</Badge>
+                    <Badge
+                      className={
+                        (intent.containment_rate ?? 0) > 90
+                          ? "bg-emerald-100 text-emerald-800"
+                          : (intent.containment_rate ?? 0) > 80
+                          ? "bg-yellow-100 text-yellow-800"
+                          : "bg-red-100 text-red-800"
+                      }
+                    >
+                      {(intent.containment_rate ?? 0).toFixed(1)}%
+                    </Badge>
                   </div>
                 </div>
-              ))}
-            </div>
+                <div className="w-full bg-gray-200 rounded-full h-2">
+                  <div
+                    className="bg-blue-600 h-2 rounded-full transition-all"
+                    style={{ width: `${(intent.frequency / maxFreq) * 100}%` }}
+                  />
+                </div>
+                <p className="text-xs text-gray-600 mt-1">
+                  Avg {(intent.avg_duration ?? 0).toFixed(1)} turns
+                </p>
+              </div>
+            ))}
           </CardContent>
         </Card>
 
         <Card>
-          <CardHeader>
-            <CardTitle>Conversation Flow Analysis</CardTitle>
-          </CardHeader>
+          <CardHeader><CardTitle>Conversation Flow</CardTitle></CardHeader>
           <CardContent>
             <div className="h-[300px]">
               <ResponsiveContainer width="100%" height="100%">
-                <LineChart data={conversationFlowData}>
+                <LineChart
+                  data={conversationFlows.map((f, i) => ({
+                    turn: `Turn ${i + 1}`,
+                    completion: 100 - f.dropoff_rate,
+                    abandonment: f.dropoff_rate
+                  }))}
+                >
                   <CartesianGrid strokeDasharray="3 3" />
                   <XAxis dataKey="turn" />
                   <YAxis />
-                  <Line
-                    type="monotone"
-                    dataKey="completion"
-                    stroke="#10b981"
-                    strokeWidth={2}
-                    name="Completion Rate"
-                  />
-                  <Line
-                    type="monotone"
-                    dataKey="abandonment"
-                    stroke="#ef4444"
-                    strokeWidth={2}
-                    name="Abandonment Rate"
-                  />
+                  <Line type="monotone" dataKey="completion" stroke="#10b981" strokeWidth={2} name="Completion" />
+                  <Line type="monotone" dataKey="abandonment" stroke="#ef4444" strokeWidth={2} name="Abandonment" />
                 </LineChart>
               </ResponsiveContainer>
             </div>
@@ -251,172 +255,116 @@ export function ConversationAnalyticsDashboard() {
         </Card>
       </div>
 
-      {/* Sentiment Analysis and Document Retrieval */}
+      {/* Sentiment + Documents */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <Card>
-          <CardHeader>
-            <CardTitle>Sentiment Trends</CardTitle>
-          </CardHeader>
+          <CardHeader><CardTitle>Sentiment Trends</CardTitle></CardHeader>
           <CardContent>
             <div className="h-[300px]">
               <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={processedSentimentTrends.length > 0 ? processedSentimentTrends : sentimentTrendsData}>
+                <BarChart data={processedSentiment}>
                   <CartesianGrid strokeDasharray="3 3" />
                   <XAxis dataKey="week" />
                   <YAxis />
-                  <Bar dataKey="positive" stackId="a" fill="#10b981" name="Positive" />
-                  <Bar dataKey="neutral" stackId="a" fill="#f59e0b" name="Neutral" />
-                  <Bar dataKey="negative" stackId="a" fill="#ef4444" name="Negative" />
+                  <Bar dataKey="positive" stackId="a" fill="#10b981" />
+                  <Bar dataKey="neutral" stackId="a" fill="#f59e0b" />
+                  <Bar dataKey="negative" stackId="a" fill="#ef4444" />
                 </BarChart>
               </ResponsiveContainer>
             </div>
-            <div className="mt-4 flex justify-center space-x-6">
-              <div className="flex items-center space-x-2">
-                <div className="w-3 h-3 bg-emerald-500 rounded-full"></div>
-                <span className="text-sm">Positive</span>
-              </div>
-              <div className="flex items-center space-x-2">
-                <div className="w-3 h-3 bg-yellow-500 rounded-full"></div>
-                <span className="text-sm">Neutral</span>
-              </div>
-              <div className="flex items-center space-x-2">
-                <div className="w-3 h-3 bg-red-500 rounded-full"></div>
-                <span className="text-sm">Negative</span>
-              </div>
+            <div className="mt-4 flex justify-center gap-6 text-sm">
+              <div className="flex items-center gap-2"><div className="w-3 h-3 bg-emerald-500 rounded-full" /> Positive</div>
+              <div className="flex items-center gap-2"><div className="w-3 h-3 bg-yellow-500 rounded-full" /> Neutral</div>
+              <div className="flex items-center gap-2"><div className="w-3 h-3 bg-red-500 rounded-full" /> Negative</div>
             </div>
           </CardContent>
         </Card>
 
         <Card>
           <CardHeader>
-            <CardTitle className="flex items-center space-x-2">
-              <FileText className="w-5 h-5" />
-              <span>Document Retrieval Performance</span>
+            <CardTitle className="flex items-center gap-2">
+              <FileText className="w-5 h-5" /> Document Retrieval
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="space-y-4">
-              {(documentData.length > 0 ? documentData.slice(0, 6) : [
-                { document_type: "Forms & Applications", access_frequency: 342, success_rate: 94.2 },
-                { document_type: "Policy Documents", access_frequency: 285, success_rate: 91.8 },
-                { document_type: "Service Guidelines", access_frequency: 220, success_rate: 88.5 },
-                { document_type: "FAQ Responses", access_frequency: 195, success_rate: 96.1 },
-                { document_type: "Legal Documents", access_frequency: 145, success_rate: 85.2 },
-                { document_type: "Contact Information", access_frequency: 125, success_rate: 98.4 },
-              ]).map((doc, index) => (
-                <div key={index} className="flex items-center justify-between">
-                  <div className="flex-1">
-                    <div className="flex justify-between items-center mb-1">
-                      <span className="text-sm font-medium">{doc.document_type}</span>
-                      <div className="flex items-center space-x-2">
-                        <span className="text-sm text-gray-600">{doc.access_frequency} requests</span>
-                        <Badge className={`${doc.success_rate > 95 ? 'bg-emerald-100 text-emerald-800' : doc.success_rate > 90 ? 'bg-yellow-100 text-yellow-800' : 'bg-red-100 text-red-800'}`}>
-                          {doc.success_rate.toFixed(1)}%
-                        </Badge>
-                      </div>
-                    </div>
-                    <div className="w-full bg-gray-200 rounded-full h-2">
-                      <div className="bg-blue-600 h-2 rounded-full" style={{ width: `${doc.success_rate}%` }} />
-                    </div>
+            {documentData.slice(0, 6).map((doc, i) => (
+              <div key={i} className="mb-3">
+                <div className="flex justify-between mb-1">
+                  <span className="text-sm font-medium">{doc.title}</span>
+                  <div className="flex gap-2">
+                    <span className="text-sm text-gray-600">{doc.retrieval_count}</span>
+                    <Badge
+                      className={
+                        doc.success_rate > 95
+                          ? "bg-emerald-100 text-emerald-800"
+                          : doc.success_rate > 90
+                          ? "bg-yellow-100 text-yellow-800"
+                          : "bg-red-100 text-red-800"
+                      }
+                    >
+                      {doc.success_rate.toFixed(1)}%
+                    </Badge>
                   </div>
                 </div>
-              ))}
-            </div>
+                <div className="w-full bg-gray-200 rounded-full h-2">
+                  <div className="bg-blue-600 h-2 rounded-full" style={{ width: `${doc.success_rate}%` }} />
+                </div>
+              </div>
+            ))}
           </CardContent>
         </Card>
       </div>
 
-      {/* Knowledge Gaps and Drop-off Analysis */}
+      {/* Knowledge Gaps + Drop-offs */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <Card>
           <CardHeader>
-            <CardTitle className="flex items-center space-x-2">
-              <Search className="w-5 h-5" />
-              <span>Knowledge Gaps Analysis</span>
+            <CardTitle className="flex items-center gap-2">
+              <Search className="w-5 h-5" /> Knowledge Gaps
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="space-y-4">
-              {(knowledgeGaps?.knowledge_gaps || [
-                { topic: "New Service Requirements", query_frequency: 45, success_rate: 62.3, example_queries: ["What documents do I need for new business registration?", "How to apply for digital ID?"] },
-                { topic: "Appeal Processes", query_frequency: 32, success_rate: 58.7, example_queries: ["How to appeal a rejected application?", "What is the appeals timeline?"] },
-                { topic: "Emergency Services", query_frequency: 28, success_rate: 71.4, example_queries: ["Emergency contact numbers", "After-hours service availability"] },
-                { topic: "Payment Methods", query_frequency: 24, success_rate: 83.2, example_queries: ["Can I pay online?", "What payment methods are accepted?"] },
-              ]).slice(0, 4).map((gap, index) => (
-                <div key={index} className="p-4 bg-yellow-50 rounded-lg border border-yellow-200">
-                  <div className="flex justify-between items-start mb-2">
-                    <h4 className="font-medium text-yellow-800">{gap.topic}</h4>
-                    <div className="flex items-center space-x-2">
-                      <Badge variant="secondary">{gap.query_frequency} queries</Badge>
-                      <Badge className="bg-yellow-100 text-yellow-800">
-                        {gap.success_rate.toFixed(1)}% resolved
-                      </Badge>
-                    </div>
-                  </div>
-                  <div className="text-xs text-gray-600 mb-2">
-                    Common queries: "{gap.example_queries[0]}"
-                  </div>
-                  <div className="w-full bg-yellow-200 rounded-full h-2">
-                    <div className="bg-yellow-600 h-2 rounded-full" style={{ width: `${gap.success_rate}%` }} />
-                  </div>
+            {knowledgeGaps.slice(0, 4).map((gap, i) => (
+              <div key={i} className="p-3 bg-yellow-50 rounded-lg border border-yellow-200 mb-3">
+                <div className="flex justify-between mb-1">
+                  <h4 className="font-medium text-yellow-800">"{gap.query}"</h4>
+                  <Badge variant="secondary">{gap.frequency}</Badge>
                 </div>
-              ))}
-            </div>
-            {knowledgeGaps?.recommendations && (
-              <div className="mt-4 p-3 bg-blue-50 rounded-lg">
-                <h4 className="text-sm font-medium text-blue-800 mb-2">Recommendations:</h4>
-                <ul className="text-xs text-blue-700 space-y-1">
-                  {knowledgeGaps.recommendations.slice(0, 3).map((rec, index) => (
-                    <li key={index}>• {rec}</li>
-                  ))}
-                </ul>
+                {gap.suggested_intent && (
+                  <p className="text-xs text-gray-600">
+                    Suggested: {gap.suggested_intent.replace(/_/g, " ")}
+                  </p>
+                )}
               </div>
-            )}
+            ))}
           </CardContent>
         </Card>
 
         <Card>
           <CardHeader>
-            <CardTitle className="flex items-center space-x-2">
-              <TrendingDown className="w-5 h-5" />
-              <span>Conversation Drop-off Points</span>
+            <CardTitle className="flex items-center gap-2">
+              <TrendingDown className="w-5 h-5" /> Drop-off Points
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="space-y-4">
-              {processedDropOffPoints.map((point, index) => (
-                <div key={index} className="flex items-center justify-between">
-                  <div className="flex-1">
-                    <div className="flex justify-between items-center mb-1">
-                      <span className="text-sm font-medium">{point.stage}</span>
-                      <div className="flex items-center space-x-2">
-                        <span className="text-sm text-gray-600">{point.users} users</span>
-                        <Badge variant="secondary">{point.percentage.toFixed(1)}%</Badge>
-                      </div>
-                    </div>
-                    <div className="w-full bg-gray-200 rounded-full h-2">
-                      <div className="bg-emerald-600 h-2 rounded-full" style={{ width: `${point.percentage}%` }} />
-                    </div>
+            {processedDropOffs.map((p, i) => (
+              <div key={i} className="mb-3">
+                <div className="flex justify-between mb-1">
+                  <span className="text-sm font-medium">{p.stage}</span>
+                  <div className="flex gap-2">
+                    <span className="text-sm text-gray-600">{p.users} users</span>
+                    <Badge variant="secondary">{p.percentage}%</Badge>
                   </div>
                 </div>
-              ))}
-            </div>
-            
-            {dropOffData?.common_triggers && (
-              <div className="mt-6 p-3 bg-red-50 rounded-lg">
-                <h4 className="text-sm font-medium text-red-800 mb-2">Common Drop-off Triggers:</h4>
-                <div className="flex flex-wrap gap-2">
-                  {dropOffData.common_triggers.slice(0, 4).map((trigger, index) => (
-                    <Badge key={index} className="bg-red-100 text-red-800 text-xs">
-                      {trigger}
-                    </Badge>
-                  ))}
+                <div className="w-full bg-gray-200 rounded-full h-2">
+                  <div className="bg-emerald-600 h-2 rounded-full" style={{ width: `${p.percentage}%` }} />
                 </div>
               </div>
-            )}
+            ))}
           </CardContent>
         </Card>
       </div>
+
     </div>
   )
 }

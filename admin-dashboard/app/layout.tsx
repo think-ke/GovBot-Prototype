@@ -9,8 +9,8 @@ import { Toaster } from 'sonner'
 const inter = Inter({ subsets: ['latin'] })
 
 export const metadata: Metadata = {
-  title: 'GovStack Admin Dashboard',
-  description: 'Administrative interface for GovStack content management',
+  title: 'GovBot Admin Dashboard',
+  description: 'Administration dashboard for GovBot platform',
 }
 
 export default function RootLayout({

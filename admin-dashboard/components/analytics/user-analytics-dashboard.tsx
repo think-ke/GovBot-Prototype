@@ -1,3 +1,5 @@
+"use client"
+
 import { MetricCard } from "./metric-card"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
@@ -27,7 +29,7 @@ import {
   fetchUserRetention
 } from "@/lib/analytics-api"
 
-// Mock data for features not yet implemented in API
+// Mock data
 const deviceDistribution = [
   { name: "Mobile", value: 65, color: "#10b981" },
   { name: "Desktop", value: 28, color: "#3b82f6" },
@@ -35,25 +37,21 @@ const deviceDistribution = [
 ]
 
 export function UserAnalyticsDashboard() {
-  // State for API data
   const [demographics, setDemographics] = useState<UserDemographics | null>(null)
   const [sessionFrequencyData, setSessionFrequencyData] = useState<SessionFrequency[]>([])
   const [sentimentData, setSentimentData] = useState<UserSentiment | null>(null)
   const [retentionData, setRetentionData] = useState<RetentionData | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
-
-  // Processed data for charts
   const [processedSessionFrequency, setProcessedSessionFrequency] = useState<any[]>([])
   const [processedRetention, setProcessedRetention] = useState<any[]>([])
 
-  // Fetch data on component mount
   useEffect(() => {
     const fetchData = async () => {
       try {
         setLoading(true)
         setError(null)
-        
+
         const [demographicsData, sessionData, sentimentDataResult, retentionDataResult] = await Promise.all([
           fetchUserDemographics().catch(() => null),
           fetchSessionFrequency().catch(() => []),
@@ -66,30 +64,22 @@ export function UserAnalyticsDashboard() {
         setSentimentData(sentimentDataResult)
         setRetentionData(retentionDataResult)
 
-        // Process session frequency data for charts
+        // Process session frequency
         if (sessionData.length > 0) {
-          const sessionRanges = [
+          const ranges = [
             { range: "1 session", min: 1, max: 1 },
             { range: "2-5 sessions", min: 2, max: 5 },
             { range: "6-10 sessions", min: 6, max: 10 },
             { range: "11-20 sessions", min: 11, max: 20 },
             { range: "20+ sessions", min: 21, max: Infinity },
           ]
-
-          const totalUsers = sessionData.length
-          const processedFrequency = sessionRanges.map(range => {
-            const users = sessionData.filter(user => 
-              user.total_sessions >= range.min && user.total_sessions <= range.max
-            ).length
-            return {
-              range: range.range,
-              users,
-              percentage: totalUsers > 0 ? (users / totalUsers * 100) : 0
-            }
+          const total = sessionData.length
+          const processed = ranges.map(r => {
+            const users = sessionData.filter(u => u.total_sessions >= r.min && u.total_sessions <= r.max).length
+            return { range: r.range, users, percentage: total > 0 ? (users / total * 100) : 0 }
           })
-          setProcessedSessionFrequency(processedFrequency)
+          setProcessedSessionFrequency(processed)
         } else {
-          // Mock data if no session data available
           setProcessedSessionFrequency([
             { range: "1 session", users: 320, percentage: 42 },
             { range: "2-5 sessions", users: 245, percentage: 32 },
@@ -99,25 +89,22 @@ export function UserAnalyticsDashboard() {
           ])
         }
 
-        // Process retention data for charts
+        // Process retention
         if (retentionDataResult) {
-          const retention = [
+          setProcessedRetention([
             { period: "Day 1", rate: retentionDataResult.day_1_retention },
             { period: "Day 7", rate: retentionDataResult.day_7_retention },
             { period: "Day 30", rate: retentionDataResult.day_30_retention },
-          ]
-          setProcessedRetention(retention)
+          ])
         } else {
-          // Mock retention data
           setProcessedRetention([
             { period: "Day 1", rate: 85 },
             { period: "Day 7", rate: 62 },
             { period: "Day 30", rate: 45 },
           ])
         }
-
       } catch (err) {
-        setError(err instanceof Error ? err.message : 'An error occurred')
+        setError(err instanceof Error ? err.message : 'Failed to load data')
       } finally {
         setLoading(false)
       }
@@ -137,8 +124,8 @@ export function UserAnalyticsDashboard() {
 
   if (error) {
     return (
-      <div className="flex items-center justify-center h-64">
-        <div className="text-center">
+      <div className="flex items-center justify-center h-64 text-center">
+        <div>
           <p className="text-red-600 mb-2">Error loading user analytics</p>
           <p className="text-sm text-gray-600">{error}</p>
         </div>
@@ -148,291 +135,138 @@ export function UserAnalyticsDashboard() {
 
   return (
     <div className="space-y-6">
-      {/* User Overview Metrics */}
+      {/* Metrics */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-        <MetricCard
-          title="Total Users"
-          value={demographics?.total_users || 0}
-          change={demographics?.user_growth_rate || 0}
-          changeLabel="vs last month"
-          icon={<Users className="w-4 h-4" />}
-          trend={demographics?.user_growth_rate && demographics.user_growth_rate > 0 ? "up" : "down"}
-        />
-        <MetricCard
-          title="New Users"
-          value={demographics?.new_users || 0}
-          change={0} // Would need additional API data for change calculation
-          changeLabel="vs last month"
-          icon={<UserPlus className="w-4 h-4" />}
-          trend="neutral"
-        />
-        <MetricCard
-          title="Active Users"
-          value={demographics?.active_users || 0}
-          change={0} // Would need additional API data for change calculation
-          changeLabel="vs last month"
-          icon={<UserCheck className="w-4 h-4" />}
-          trend="neutral"
-        />
-        <MetricCard
-          title="Returning Users"
-          value={demographics?.returning_users || 0}
-          change={0} // Would need additional API data for change calculation
-          changeLabel="vs last month"
-          icon={<Clock className="w-4 h-4" />}
-          trend="neutral"
-        />
+        <MetricCard title="Total Users" value={demographics?.total_users || 0} change={demographics?.user_growth_rate || 0} changeLabel="vs last month" icon={<Users className="w-4 h-4" />} trend={demographics?.user_growth_rate && demographics.user_growth_rate > 0 ? "up" : "down"} />
+        <MetricCard title="New Users" value={demographics?.new_users || 0} change={0} changeLabel="vs last month" icon={<UserPlus className="w-4 h-4" />} trend="neutral" />
+        <MetricCard title="Active Users" value={demographics?.active_users || 0} change={0} changeLabel="vs last month" icon={<UserCheck className="w-4 h-4" />} trend="neutral" />
+        <MetricCard title="Returning Users" value={demographics?.returning_users || 0} change={0} changeLabel="vs last month" icon={<Clock className="w-4 h-4" />} trend="neutral" />
       </div>
 
-      {/* User Growth and Session Frequency */}
+      {/* Growth + Frequency */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <Card>
-          <CardHeader>
-            <CardTitle>User Growth Overview</CardTitle>
-          </CardHeader>
+          <CardHeader><CardTitle>User Growth Overview</CardTitle></CardHeader>
           <CardContent>
-            <div className="space-y-4">
-              <div className="grid grid-cols-2 gap-4">
-                <div className="text-center p-4 bg-emerald-50 rounded-lg">
-                  <div className="text-2xl font-bold text-emerald-600">
-                    {demographics?.total_users || 0}
-                  </div>
-                  <div className="text-sm text-emerald-700">Total Users</div>
+            <div className="grid grid-cols-2 gap-4">
+              {[
+                { label: "Total", value: demographics?.total_users || 0, color: "emerald" },
+                { label: "New", value: demographics?.new_users || 0, color: "blue" },
+                { label: "Active", value: demographics?.active_users || 0, color: "orange" },
+                { label: "Returning", value: demographics?.returning_users || 0, color: "purple" },
+              ].map((item, i) => (
+                <div key={i} className="text-center p-4 bg-${item.color}-50 rounded-lg">
+                  <div className="text-2xl font-bold text-${item.color}-600">{item.value}</div>
+                  <div className="text-sm text-${item.color}-700">{item.label} Users</div>
                 </div>
-                <div className="text-center p-4 bg-blue-50 rounded-lg">
-                  <div className="text-2xl font-bold text-blue-600">
-                    {demographics?.new_users || 0}
-                  </div>
-                  <div className="text-sm text-blue-700">New Users</div>
-                </div>
-                <div className="text-center p-4 bg-orange-50 rounded-lg">
-                  <div className="text-2xl font-bold text-orange-600">
-                    {demographics?.active_users || 0}
-                  </div>
-                  <div className="text-sm text-orange-700">Active Users</div>
-                </div>
-                <div className="text-center p-4 bg-purple-50 rounded-lg">
-                  <div className="text-2xl font-bold text-purple-600">
-                    {demographics?.returning_users || 0}
-                  </div>
-                  <div className="text-sm text-purple-700">Returning Users</div>
-                </div>
-              </div>
-              <div className="text-center text-sm text-gray-600">
-                Growth Rate: {demographics?.user_growth_rate?.toFixed(1) || 0}%
-              </div>
+              ))}
+            </div>
+            <div className="text-center mt-4 text-sm text-gray-600">
+              Growth Rate: {demographics?.user_growth_rate?.toFixed(1) || 0}%
             </div>
           </CardContent>
         </Card>
 
         <Card>
-          <CardHeader>
-            <CardTitle>Session Frequency Distribution</CardTitle>
-          </CardHeader>
+          <CardHeader><CardTitle>Session Frequency</CardTitle></CardHeader>
           <CardContent>
-            <div className="space-y-4">
-              {processedSessionFrequency.map((item, index) => (
-                <div key={index} className="space-y-2">
-                  <div className="flex justify-between items-center">
-                    <span className="text-sm font-medium">{item.range}</span>
-                    <div className="flex items-center space-x-2">
-                      <span className="text-sm text-gray-600">{item.users} users</span>
-                      <Badge variant="secondary">{item.percentage.toFixed(1)}%</Badge>
-                    </div>
+            {processedSessionFrequency.map((item, i) => (
+              <div key={i} className="space-y-2 mb-3">
+                <div className="flex justify-between text-sm">
+                  <span>{item.range}</span>
+                  <div className="flex items-center gap-2">
+                    <span className="text-gray-600">{item.users} users</span>
+                    <Badge variant="secondary">{item.percentage.toFixed(1)}%</Badge>
+                  </div>
+                </div>
+                <div className="w-full bg-gray-200 rounded-full h-2">
+                  <div className="bg-emerald-600 h-2 rounded-full" style={{ width: `${item.percentage}%` }} />
+                </div>
+              </div>
+            ))}
+          </CardContent>
+        </Card>
+      </div>
+
+      {/* Device + Retention */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <Card>
+          <CardHeader><CardTitle className="flex items-center gap-2"><Smartphone className="w-5 h-5" /> Device Distribution</CardTitle></CardHeader>
+          <CardContent>
+            <div className="h-[250px]"><ResponsiveContainer><PieChart><Pie data={deviceDistribution} cx="50%" cy="50%" innerRadius={50} outerRadius={80} dataKey="value">{deviceDistribution.map((e, i) => <Cell key={i} fill={e.color} />)}</Pie></PieChart></ResponsiveContainer></div>
+            <div className="mt-4 space-y-2">
+              {deviceDistribution.map((d, i) => (
+                <div key={i} className="flex justify-between items-center">
+                  <div className="flex items-center gap-2">
+                    <div className="w-3 h-3 rounded-full" style={{ backgroundColor: d.color }} />
+                    <span className="text-sm">{d.name}</span>
+                  </div>
+                  <span className="text-sm font-medium">{d.value}%</span>
+                </div>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader><CardTitle>User Retention</CardTitle></CardHeader>
+          <CardContent>
+            <div className="h-[250px]"><ResponsiveContainer><LineChart data={processedRetention}><CartesianGrid strokeDasharray="3 3" /><XAxis dataKey="period" /><YAxis /><Line type="monotone" dataKey="rate" stroke="#10b981" strokeWidth={3} dot={{ fill: "#10b981" }} /></LineChart></ResponsiveContainer></div>
+          </CardContent>
+        </Card>
+      </div>
+
+      {/* Sentiment + Locations */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <Card>
+          <CardHeader><CardTitle className="flex items-center gap-2"><Heart className="w-5 h-5" /> Satisfaction</CardTitle></CardHeader>
+          <CardContent>
+            <div className="text-center mb-6">
+              <div className="text-3xl font-bold text-emerald-600">{sentimentData?.satisfaction_score?.toFixed(1) || '4.2'}/5</div>
+              <div className="text-sm text-gray-600">Overall Score</div>
+            </div>
+            {[
+              { label: "Positive", value: sentimentData ? (sentimentData.positive_conversations / (sentimentData.positive_conversations + sentimentData.neutral_conversations + sentimentData.negative_conversations) * 100) : 72, color: "emerald" },
+              { label: "Neutral", value: sentimentData ? (sentimentData.neutral_conversations / (sentimentData.positive_conversations + sentimentData.neutral_conversations + sentimentData.negative_conversations) * 100) : 22, color: "yellow" },
+              { label: "Escalation", value: sentimentData?.escalation_rate || 3.2, color: "red" },
+            ].map((item, i) => (
+              <div key={i} className="flex justify-between items-center mb-3">
+                <span className="text-sm">{item.label}</span>
+                <div className="flex items-center gap-2">
+                  <div className="w-24 bg-gray-200 rounded-full h-2">
+                    <div className={`bg-${item.color}-500 h-2 rounded-full`} style={{ width: `${item.value}%` }} />
+                  </div>
+                  <span className="text-sm font-medium">{item.value.toFixed(1)}%</span>
+                </div>
+              </div>
+            ))}
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader><CardTitle className="flex items-center gap-2"><MapPin className="w-5 h-5" /> Top Locations</CardTitle></CardHeader>
+          <CardContent>
+            {[
+              { location: "Capital Region", users: 485, percentage: 26.2 },
+              { location: "Northern Province", users: 320, percentage: 17.3 },
+              { location: "Eastern District", users: 280, percentage: 15.1 },
+              { location: "Southern Region", users: 245, percentage: 13.2 },
+              { location: "Western Province", users: 210, percentage: 11.4 },
+              { location: "Other", users: 310, percentage: 16.8 },
+            ].map((loc, i) => (
+              <div key={i} className="flex items-center justify-between mb-3">
+                <div className="flex-1">
+                  <div className="flex justify-between mb-1">
+                    <span className="text-sm font-medium">{loc.location}</span>
+                    <span className="text-sm text-gray-600">{loc.users} users</span>
                   </div>
                   <div className="w-full bg-gray-200 rounded-full h-2">
-                    <div className="bg-emerald-600 h-2 rounded-full" style={{ width: `${item.percentage}%` }} />
+                    <div className="bg-blue-600 h-2 rounded-full" style={{ width: `${loc.percentage}%` }} />
                   </div>
                 </div>
-              ))}
-            </div>
-          </CardContent>
-        </Card>
-      </div>
-
-      {/* Device Distribution and User Retention */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center space-x-2">
-              <Smartphone className="w-5 h-5" />
-              <span>Device Distribution</span>
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="h-[250px]">
-              <ResponsiveContainer width="100%" height="100%">
-                <PieChart>
-                  <Pie
-                    data={deviceDistribution}
-                    cx="50%"
-                    cy="50%"
-                    innerRadius={50}
-                    outerRadius={80}
-                    paddingAngle={5}
-                    dataKey="value"
-                  >
-                    {deviceDistribution.map((entry, index) => (
-                      <Cell key={`cell-${index}`} fill={entry.color} />
-                    ))}
-                  </Pie>
-                </PieChart>
-              </ResponsiveContainer>
-            </div>
-            <div className="mt-4 space-y-2">
-              {deviceDistribution.map((item, index) => (
-                <div key={index} className="flex items-center justify-between">
-                  <div className="flex items-center space-x-2">
-                    <div className="w-3 h-3 rounded-full" style={{ backgroundColor: item.color }} />
-                    <span className="text-sm">{item.name}</span>
-                  </div>
-                  <span className="text-sm font-medium">{item.value}%</span>
-                </div>
-              ))}
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader>
-            <CardTitle>User Retention Rates</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="h-[250px]">
-              <ResponsiveContainer width="100%" height="100%">
-                <LineChart data={processedRetention}>
-                  <CartesianGrid strokeDasharray="3 3" />
-                  <XAxis dataKey="period" />
-                  <YAxis />
-                  <Line
-                    type="monotone"
-                    dataKey="rate"
-                    stroke="#10b981"
-                    strokeWidth={3}
-                    dot={{ fill: "#10b981", strokeWidth: 2, r: 4 }}
-                  />
-                </LineChart>
-              </ResponsiveContainer>
-            </div>
-          </CardContent>
-        </Card>
-      </div>
-
-      {/* User Satisfaction and Geographic Distribution */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center space-x-2">
-              <Heart className="w-5 h-5" />
-              <span>User Satisfaction Metrics</span>
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="space-y-6">
-              <div className="text-center">
-                <div className="text-3xl font-bold text-emerald-600">
-                  {sentimentData?.satisfaction_score?.toFixed(1) || '4.2'}/5
-                </div>
-                <div className="text-sm text-gray-600">Overall Satisfaction Score</div>
+                <Badge variant="secondary" className="ml-3">{loc.percentage}%</Badge>
               </div>
-
-              <div className="space-y-4">
-                <div className="flex justify-between items-center">
-                  <span className="text-sm">Positive Conversations</span>
-                  <div className="flex items-center space-x-2">
-                    <div className="w-24 bg-gray-200 rounded-full h-2">
-                      <div 
-                        className="bg-emerald-600 h-2 rounded-full" 
-                        style={{ 
-                          width: `${sentimentData ? 
-                            (sentimentData.positive_conversations / 
-                            (sentimentData.positive_conversations + sentimentData.neutral_conversations + sentimentData.negative_conversations) * 100) 
-                            : 72}%` 
-                        }} 
-                      />
-                    </div>
-                    <span className="text-sm font-medium">
-                      {sentimentData ? 
-                        Math.round(sentimentData.positive_conversations / 
-                        (sentimentData.positive_conversations + sentimentData.neutral_conversations + sentimentData.negative_conversations) * 100) 
-                        : 72}%
-                    </span>
-                  </div>
-                </div>
-
-                <div className="flex justify-between items-center">
-                  <span className="text-sm">Neutral Conversations</span>
-                  <div className="flex items-center space-x-2">
-                    <div className="w-24 bg-gray-200 rounded-full h-2">
-                      <div 
-                        className="bg-yellow-500 h-2 rounded-full" 
-                        style={{ 
-                          width: `${sentimentData ? 
-                            (sentimentData.neutral_conversations / 
-                            (sentimentData.positive_conversations + sentimentData.neutral_conversations + sentimentData.negative_conversations) * 100) 
-                            : 22}%` 
-                        }} 
-                      />
-                    </div>
-                    <span className="text-sm font-medium">
-                      {sentimentData ? 
-                        Math.round(sentimentData.neutral_conversations / 
-                        (sentimentData.positive_conversations + sentimentData.neutral_conversations + sentimentData.negative_conversations) * 100) 
-                        : 22}%
-                    </span>
-                  </div>
-                </div>
-
-                <div className="flex justify-between items-center">
-                  <span className="text-sm">Escalation Rate</span>
-                  <div className="flex items-center space-x-2">
-                    <div className="w-24 bg-gray-200 rounded-full h-2">
-                      <div 
-                        className="bg-red-500 h-2 rounded-full" 
-                        style={{ width: `${sentimentData?.escalation_rate || 3.2}%` }} 
-                      />
-                    </div>
-                    <span className="text-sm font-medium">{sentimentData?.escalation_rate?.toFixed(1) || 3.2}%</span>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center space-x-2">
-              <MapPin className="w-5 h-5" />
-              <span>Top User Locations</span>
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="space-y-4">
-              {[
-                { location: "Capital Region", users: 485, percentage: 26.2 },
-                { location: "Northern Province", users: 320, percentage: 17.3 },
-                { location: "Eastern District", users: 280, percentage: 15.1 },
-                { location: "Southern Region", users: 245, percentage: 13.2 },
-                { location: "Western Province", users: 210, percentage: 11.4 },
-                { location: "Other Regions", users: 310, percentage: 16.8 },
-              ].map((item, index) => (
-                <div key={index} className="flex items-center justify-between">
-                  <div className="flex-1">
-                    <div className="flex justify-between items-center mb-1">
-                      <span className="text-sm font-medium">{item.location}</span>
-                      <span className="text-sm text-gray-600">{item.users} users</span>
-                    </div>
-                    <div className="w-full bg-gray-200 rounded-full h-2">
-                      <div className="bg-blue-600 h-2 rounded-full" style={{ width: `${item.percentage}%` }} />
-                    </div>
-                  </div>
-                  <Badge variant="secondary" className="ml-3">
-                    {item.percentage}%
-                  </Badge>
-                </div>
-              ))}
-            </div>
+            ))}
           </CardContent>
         </Card>
       </div>

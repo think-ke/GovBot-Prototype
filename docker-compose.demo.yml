@@ -16,9 +16,7 @@ services:
       - govstack-network
 
   admin-dashboard:
-    build:
-      context: ./admin-dashboard
-      dockerfile: Dockerfile
+    image: govstack-server-admin-dashboard:latest
     ports:
       - "${ADMIN_DASHBOARD_PORT:-3010}:3010"
     environment:
