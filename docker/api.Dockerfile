@@ -12,11 +12,11 @@ RUN apt-get update && \
 # Upgrade pip and install wheel
 RUN pip install --no-cache-dir --upgrade pip setuptools wheel
 
-# Copy requirements.txt first to leverage Docker cache
-COPY ./requirements.txt /app/requirements.txt
+# Copy requirements-uv-generated.txt first to leverage Docker cache
+COPY ./requirements-uv-generated.txt /app/requirements-uv-generated.txt
 
 # Install Python dependencies
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir -r requirements-uv-generated.txt
 
 # Install gunicorn and uvloop
 RUN pip install --no-cache-dir gunicorn uvloop uvicorn[standard] watchfiles
