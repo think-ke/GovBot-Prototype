@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 from dotenv import load_dotenv
 from sqlalchemy import create_engine, text
 from opentelemetry.instrumentation.llamaindex import LlamaIndexInstrumentor
-from llama_index.embeddings.openai import OpenAIEmbedding
+from llama_index.embeddings.huggingface import HuggingFaceEmbedding
 
 load_dotenv()
 LlamaIndexInstrumentor().instrument()
@@ -57,7 +57,11 @@ def get_chroma_client() -> Any:
     return remote_db
 
 
-embed_model = OpenAIEmbedding(model="text-embedding-3-small", embed_batch_size=100)
+embed_model = HuggingFaceEmbedding(
+    model_name="BAAI/bge-small-en-v1.5",
+    device="cpu",
+    embed_batch_size=100
+)
 
 
 def _get_sync_db_url() -> Optional[str]:

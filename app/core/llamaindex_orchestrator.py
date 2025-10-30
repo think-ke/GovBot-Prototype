@@ -15,7 +15,7 @@ from llama_index.core.tools import FunctionTool
 from llama_index.core.base.llms.types import ChatMessage
 from llama_index.llms.openai import OpenAI
 from llama_index.llms.groq import Groq
-from llama_index.embeddings.openai import OpenAIEmbedding
+from llama_index.embeddings.huggingface import HuggingFaceEmbedding
 from pydantic import BaseModel, Field
 
 from app.utils.prompts import SYSTEM_PROMPT
@@ -31,8 +31,10 @@ logger = logging.getLogger(__name__)
 load_dotenv()
 
 # Configure Settings
-Settings.embed_model = OpenAIEmbedding(
-    model="text-embedding-3-small", embed_batch_size=100
+Settings.embed_model = HuggingFaceEmbedding(
+    model_name="BAAI/bge-small-en-v1.5",
+    device="cpu",
+    embed_batch_size=100
 )
 
 # Context for event tracking (optional; set by run_llamaindex_agent when db/session is provided)

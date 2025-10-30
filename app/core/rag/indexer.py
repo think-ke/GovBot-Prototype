@@ -367,7 +367,7 @@ if os.getenv("USE_UVLOOP", "false").lower() != "true":
         logging.getLogger(__name__).warning("This is normal if using uvloop. Set USE_UVLOOP=false to use nest_asyncio.")
 
 from llama_index.core import Document
-from llama_index.embeddings.openai import OpenAIEmbedding
+from llama_index.embeddings.huggingface import HuggingFaceEmbedding
 from llama_index.core.node_parser import SentenceSplitter, MarkdownElementNodeParser
 from llama_index.core.extractors import TitleExtractor
 from llama_index.core.ingestion import IngestionPipeline, IngestionCache
@@ -519,9 +519,10 @@ async def setup_vector_store(collection_name: str):
         pipeline = IngestionPipeline(
             transformations=[
                 SentenceSplitter(chunk_size=1024, chunk_overlap=50),
-                OpenAIEmbedding(
-                    model="text-embedding-3-small",
-                    chunk_size=64,
+                HuggingFaceEmbedding(
+                    model_name="BAAI/bge-small-en-v1.5",
+                    device="cpu",
+                    embed_batch_size=64,
                 ),
             ],
             vector_store=vector_store,

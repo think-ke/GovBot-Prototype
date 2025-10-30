@@ -7,7 +7,7 @@ from app.core.rag.tool_loader import tools, collection_dict
 from llama_index.core import Settings
 from pydantic_ai import Agent
 from llama_index.llms.openai import OpenAI
-from llama_index.embeddings.openai import OpenAIEmbedding
+from llama_index.embeddings.huggingface import HuggingFaceEmbedding
 from pydantic import BaseModel, Field
 from typing import List, Optional, Any, Dict, Union
 from pydantic_ai.messages import ModelMessage, ModelMessagesTypeAdapter
@@ -38,8 +38,10 @@ client = OpenAI(
     model=os.getenv("RUNPOD_MODEL_NAME", "gpt-4o"),
 )
 
-Settings.embed_model = OpenAIEmbedding(
-    model="text-embedding-3-small", embed_batch_size=100
+Settings.embed_model = HuggingFaceEmbedding(
+    model_name="BAAI/bge-small-en-v1.5",
+    device="cpu",
+    embed_batch_size=100
 )
 
 class EventTrackingContext:
