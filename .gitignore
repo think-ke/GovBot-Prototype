@@ -193,4 +193,5 @@ data/postgres-dev
 data/backups
 data/backups-dev
 
-backups
+backups/
+data_backups/
