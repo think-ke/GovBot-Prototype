@@ -458,13 +458,15 @@ class WebCrawler:
         """
         links = extract_links(soup, base_url)
         links_processed = 0
+        base_domain = get_domain(base_url)
         
         for link in links:
             url = link['url']
             target_domain = get_domain(url)
             
             # Skip external links if configured to do so
-            if not self.settings['follow_external_links'] and target_domain != get_domain(base_url):
+            if not self.settings['follow_external_links'] and target_domain != base_domain:
+                logger.debug(f"Skipping external link in _process_links: {url} (target domain: {target_domain}, base domain: {base_domain})")
                 continue
             
             # Skip file URLs
@@ -807,19 +809,35 @@ class WebCrawler:
                 # If successful, get outgoing links
                 if result:
                     async with self.session_maker() as session:
+                        # Get the source webpage to determine its domain
+                        query = select(Webpage).where(Webpage.id == result)
+                        source_result = await session.execute(query)
+                        source_webpage = source_result.scalars().first()
+                        source_domain = get_domain(source_webpage.url) if source_webpage else None
+                        
                         # Get links from this page to other pages
                         query = select(WebpageLink).where(WebpageLink.source_id == result)
-                        result = await session.execute(query)
-                        links = result.scalars().all()
+                        links_result = await session.execute(query)
+                        links = links_result.scalars().all()
                         
                         # For each link, get the target webpage
                         for link in links:
                             query = select(Webpage).where(Webpage.id == link.target_id)
-                            result = await session.execute(query)
-                            target_webpage = result.scalars().first()
+                            target_result = await session.execute(query)
+                            target_webpage = target_result.scalars().first()
+                            
+                            if not target_webpage:
+                                continue
+                            
+                            # Skip external links if configured to do so
+                            if not self.settings['follow_external_links'] and source_domain:
+                                target_domain = get_domain(target_webpage.url)
+                                if target_domain != source_domain:
+                                    logger.debug(f"Skipping external link: {target_webpage.url} (target domain: {target_domain}, source domain: {source_domain})")
+                                    continue
                             
                             # If within depth limit and not visited, add to queue
-                            if (target_webpage and target_webpage.url not in self.visited_urls and
+                            if (target_webpage.url not in self.visited_urls and
                                 target_webpage.crawl_depth <= self.settings['max_depth']):
                                 await queue.put((target_webpage.url, target_webpage.crawl_depth, False))
                                 self.urls_queued += 1
@@ -853,19 +871,35 @@ class WebCrawler:
             # If successful, get outgoing links
             if result:
                 async with self.session_maker() as session:
+                    # Get the source webpage to determine its domain
+                    query = select(Webpage).where(Webpage.id == result)
+                    source_result = await session.execute(query)
+                    source_webpage = source_result.scalars().first()
+                    source_domain = get_domain(source_webpage.url) if source_webpage else None
+                    
                     # Get links from this page to other pages
                     query = select(WebpageLink).where(WebpageLink.source_id == result)
-                    result = await session.execute(query)
-                    links = result.scalars().all()
+                    links_result = await session.execute(query)
+                    links = links_result.scalars().all()
                     
                     # For each link, get the target webpage
                     for link in links:
                         query = select(Webpage).where(Webpage.id == link.target_id)
-                        result = await session.execute(query)
-                        target_webpage = result.scalars().first()
+                        target_result = await session.execute(query)
+                        target_webpage = target_result.scalars().first()
+                        
+                        if not target_webpage:
+                            continue
+                        
+                        # Skip external links if configured to do so
+                        if not self.settings['follow_external_links'] and source_domain:
+                            target_domain = get_domain(target_webpage.url)
+                            if target_domain != source_domain:
+                                logger.debug(f"Skipping external link: {target_webpage.url} (target domain: {target_domain}, source domain: {source_domain})")
+                                continue
                         
                         # If within depth limit and not visited, add to stack
-                        if (target_webpage and target_webpage.url not in self.visited_urls and
+                        if (target_webpage.url not in self.visited_urls and
                             target_webpage.crawl_depth <= self.settings['max_depth']):
                             stack.append((target_webpage.url, target_webpage.crawl_depth, False))
                             self.urls_queued += 1
