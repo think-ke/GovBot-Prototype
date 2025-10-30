@@ -68,3 +68,5 @@ tmp/
 temp/
 *.tmp
 *.temp
+
+data_backups/
