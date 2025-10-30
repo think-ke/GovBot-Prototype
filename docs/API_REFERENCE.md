@@ -474,6 +474,16 @@ X-API-Key: your-api-key-here
 
 ## Document Management
 
+> **📚 NEW: Comprehensive Document Metadata API**
+> 
+> For detailed documentation on the new document metadata CRUD operations, see:
+> [**Document Metadata API Documentation**](./DOCUMENT_METADATA_API.md)
+>
+> New endpoints include:
+> - `PATCH /documents/{id}/metadata` - Update metadata without file replacement
+> - `GET /documents/{id}/metadata` - Lightweight metadata retrieval
+> - `POST /documents/bulk-metadata-update` - Bulk metadata operations
+
 ### Upload Document
 
 Upload a document to storage.
@@ -505,6 +515,9 @@ X-API-Key: your-api-key-here
   "size": 1024000,
   "description": "Government policy document",
   "is_public": false,
+  "metadata": {
+    "original_filename": "document.pdf"
+  },
   "collection_id": "policies",
   "is_indexed": false,
   "indexed_at": null,
@@ -521,7 +534,8 @@ X-API-Key: your-api-key-here
 - Sets `is_indexed=false`, triggers background indexing
 - Returns `index_job_id` so clients can poll indexing progress
 - Creates audit log entry
-```
+
+**Tip:** To add custom metadata during upload, use `PATCH /documents/{id}/metadata` immediately after upload.
 
 ### Get Document
 
@@ -540,6 +554,10 @@ X-API-Key: your-api-key-here
   "content_type": "application/pdf",
   "size": 1024000,
   "description": "Government policy document",
+  "metadata": {
+    "department": "Finance",
+    "tags": ["policy", "approved"]
+  },
   "is_indexed": true,
   "indexed_at": "2023-10-20T15:45:30.123456",
   "created_by": "user123",

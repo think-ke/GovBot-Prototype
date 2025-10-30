@@ -257,6 +257,97 @@ indexing_router = APIRouter(
     responses={404: {"description": "Not found"}},
 )
 
+# ===========================
+# Pydantic Models
+# ===========================
+
+# Document Metadata Management Models
+class DocumentMetadataUpdate(BaseModel):
+    """Request model for updating document metadata fields only (no file replacement)."""
+    description: Optional[str] = Field(None, max_length=5000, description="Updated description")
+    is_public: Optional[bool] = Field(None, description="Public visibility flag")
+    collection_id: Optional[str] = Field(None, max_length=64, description="Collection identifier")
+    metadata: Optional[Dict[str, Any]] = Field(None, description="Custom metadata object")
+    created_by: Optional[str] = Field(None, max_length=100, description="User who created the document")
+    
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "description": "Updated policy document for 2024",
+                "is_public": True,
+                "collection_id": "policies-2024",
+                "metadata": {
+                    "department": "Finance",
+                    "year": 2024,
+                    "version": "1.2",
+                    "tags": ["policy", "finance", "compliance"]
+                }
+            }
+        }
+
+
+class DocumentMetadataResponse(BaseModel):
+    """Response model for document metadata."""
+    id: int
+    filename: str
+    object_name: str
+    content_type: str
+    size: int
+    upload_date: str
+    last_accessed: Optional[str] = None
+    description: Optional[str] = None
+    is_public: bool
+    metadata: Optional[Dict[str, Any]] = None
+    collection_id: Optional[str] = None
+    is_indexed: bool
+    indexed_at: Optional[str] = None
+    created_by: Optional[str] = None
+    updated_by: Optional[str] = None
+    api_key_name: Optional[str] = None
+    
+    class Config:
+        from_attributes = True
+
+
+class BulkMetadataUpdate(BaseModel):
+    """Request model for bulk metadata updates across multiple documents."""
+    document_ids: List[int] = Field(..., description="List of document IDs to update (1-100)")
+    metadata_updates: DocumentMetadataUpdate = Field(..., description="Metadata fields to apply to all documents")
+    
+    @validator("document_ids")
+    def validate_document_ids(cls, v):
+        if not v:
+            raise ValueError("At least one document ID must be provided")
+        if len(v) > 100:
+            raise ValueError("Maximum 100 documents per bulk update")
+        return v
+    
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "document_ids": [1, 2, 3, 4, 5],
+                "metadata_updates": {
+                    "collection_id": "archive-2024",
+                    "is_public": False,
+                    "metadata": {"archived": True, "archived_date": "2024-10-30"}
+                }
+            }
+        }
+
+
+class BulkMetadataUpdateResponse(BaseModel):
+    """Response model for bulk metadata updates."""
+    updated_count: int
+    failed_count: int
+    updated_ids: List[int]
+    failed_ids: List[int]
+    errors: Optional[Dict[int, str]] = None
+
+
+# ===========================
+# Core Endpoints
+# ===========================
+
 # Core endpoints
 @core_router.get("/")
 async def root():
@@ -737,6 +828,342 @@ async def delete_document(
     except Exception as e:
         logger.error(f"Error deleting document: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Error deleting document: {str(e)}")
+
+
+@document_router.patch("/{document_id}/metadata",
+                      response_model=DocumentMetadataResponse,
+                      summary="Update document metadata",
+                      description="Update only the metadata fields of a document without replacing the file. Supports updating custom metadata object.",
+                      responses={
+                          200: {"description": "Document metadata updated successfully"},
+                          404: {"description": "Document not found"},
+                          403: {"description": "Insufficient permissions"},
+                          400: {"description": "Invalid request data"},
+                          500: {"description": "Internal server error"}
+                      })
+async def update_document_metadata(
+    document_id: int,
+    metadata_update: DocumentMetadataUpdate,
+    request: Request,
+    background_tasks: BackgroundTasks,
+    db: AsyncSession = Depends(get_db),
+    api_key_info: APIKeyInfo = Depends(require_write_permission)
+):
+    """
+    Update document metadata fields without replacing the file.
+    
+    **Use this endpoint to:**
+    - Update description, visibility, and collection assignment
+    - Add or modify custom metadata fields
+    - Update document attribution (created_by)
+    
+    **Parameters:**
+    - **document_id**: ID of the document to update
+    - **metadata_update**: JSON object with fields to update
+    
+    **Custom Metadata:**
+    The `metadata` field accepts any JSON object to store custom attributes like:
+    - Department, category, tags
+    - Version numbers, approval status
+    - Custom business fields
+    
+    **Side Effects:**
+    - If `collection_id` changes: triggers vector cleanup and reindexing
+    - Updates `updated_by` field automatically
+    - Creates audit log entry
+    
+    **Permissions:** Requires `write` permission
+    
+    **Returns:** Complete updated document metadata
+    """
+    try:
+        # Fetch the document
+        doc = await db.get(Document, document_id)
+        if not doc:
+            raise HTTPException(status_code=404, detail=f"Document {document_id} not found")
+        
+        changes: Dict[str, Any] = {}
+        index_job_id: Optional[str] = None
+        collection_changed = False
+        old_collection_id: Optional[str] = None
+        
+        # Update description
+        if metadata_update.description is not None and metadata_update.description != doc.description:
+            changes["description"] = {"old": doc.description, "new": metadata_update.description}
+            doc.description = metadata_update.description
+        
+        # Update is_public
+        if metadata_update.is_public is not None and metadata_update.is_public != doc.is_public:
+            changes["is_public"] = {"old": doc.is_public, "new": metadata_update.is_public}
+            doc.is_public = metadata_update.is_public
+        
+        # Update collection_id
+        if metadata_update.collection_id is not None:
+            normalized_collection = metadata_update.collection_id.strip()
+            current_collection = doc.collection_id or ""
+            if normalized_collection != current_collection:
+                collection_changed = True
+                old_collection_id = current_collection or None
+                changes["collection_id"] = {"old": doc.collection_id, "new": normalized_collection}
+                doc.collection_id = normalized_collection
+                # Mark for reindexing
+                doc.is_indexed = False
+                doc.indexed_at = None
+        
+        # Update or merge custom metadata
+        if metadata_update.metadata is not None:
+            old_metadata = doc.meta_data or {}
+            # Merge with existing metadata
+            new_metadata = {**old_metadata, **metadata_update.metadata}
+            changes["metadata"] = {"old": doc.meta_data, "new": new_metadata}
+            doc.meta_data = new_metadata
+        
+        # Update created_by if provided
+        if metadata_update.created_by is not None and metadata_update.created_by != doc.created_by:
+            changes["created_by"] = {"old": doc.created_by, "new": metadata_update.created_by}
+            doc.created_by = metadata_update.created_by
+        
+        # Track who made the update
+        doc.updated_by = api_key_info.get_user_id()
+        
+        # Commit changes
+        await db.commit()
+        await db.refresh(doc)
+        
+        # Handle vector cleanup if collection changed
+        if collection_changed and old_collection_id:
+            try:
+                delete_embeddings_for_doc(collection_id=old_collection_id, doc_id=str(document_id))
+            except Exception as ve:
+                logger.warning(f"Failed to delete embeddings for doc {document_id} in old collection: {ve}")
+            
+            # Schedule reindexing in new collection
+            new_collection = doc.collection_id
+            if new_collection and background_tasks:
+                try:
+                    index_job_id = register_document_index_job(
+                        new_collection,
+                        document_ids=[document_id]
+                    )
+                    background_tasks.add_task(
+                        start_background_document_indexing,
+                        new_collection,
+                        index_job_id
+                    )
+                except Exception as e:
+                    logger.warning(f"Failed to schedule reindexing for doc {document_id}: {e}")
+        
+        # Log audit action
+        await log_audit_action(
+            user_id=api_key_info.get_user_id(),
+            action="update_metadata",
+            resource_type="document",
+            resource_id=str(document_id),
+            details={"changes": changes, "index_job_id": index_job_id},
+            request=request,
+            api_key_name=api_key_info.name
+        )
+        
+        # Return updated document metadata
+        response_data = doc.to_dict()
+        if index_job_id:
+            response_data["index_job_id"] = index_job_id
+        
+        return response_data
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error updating document metadata: {e}")
+        raise HTTPException(status_code=500, detail=f"Error updating document metadata: {str(e)}")
+
+
+@document_router.get("/{document_id}/metadata",
+                    response_model=DocumentMetadataResponse,
+                    summary="Get document metadata",
+                    description="Retrieve only the metadata of a document without generating access URL",
+                    responses={
+                        200: {"description": "Document metadata retrieved successfully"},
+                        404: {"description": "Document not found"},
+                        403: {"description": "Insufficient permissions"},
+                        500: {"description": "Internal server error"}
+                    })
+async def get_document_metadata(
+    document_id: int,
+    db: AsyncSession = Depends(get_db),
+    api_key_info: APIKeyInfo = Depends(require_read_permission)
+):
+    """
+    Get document metadata without generating a presigned access URL.
+    
+    Use this endpoint when you only need metadata information:
+    - Document properties (filename, size, content type)
+    - Custom metadata fields
+    - Indexing status
+    - Audit information (created_by, updated_by)
+    
+    **Parameters:**
+    - **document_id**: ID of the document
+    
+    **Permissions:** Requires `read` permission
+    
+    **Returns:** Document metadata (no access URL generated)
+    """
+    try:
+        doc = await db.get(Document, document_id)
+        if not doc:
+            raise HTTPException(status_code=404, detail=f"Document {document_id} not found")
+        
+        return doc.to_dict()
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error retrieving document metadata: {e}")
+        raise HTTPException(status_code=500, detail=f"Error retrieving document metadata: {str(e)}")
+
+
+@document_router.post("/bulk-metadata-update",
+                     response_model=BulkMetadataUpdateResponse,
+                     summary="Bulk update document metadata",
+                     description="Update metadata for multiple documents in a single operation",
+                     responses={
+                         200: {"description": "Bulk update completed"},
+                         403: {"description": "Insufficient permissions"},
+                         400: {"description": "Invalid request data"},
+                         500: {"description": "Internal server error"}
+                     })
+async def bulk_update_document_metadata(
+    bulk_update: BulkMetadataUpdate,
+    request: Request,
+    background_tasks: BackgroundTasks,
+    db: AsyncSession = Depends(get_db),
+    api_key_info: APIKeyInfo = Depends(require_write_permission)
+):
+    """
+    Update metadata for multiple documents simultaneously.
+    
+    **Use Cases:**
+    - Bulk re-categorization or collection assignment
+    - Mass visibility changes (public/private)
+    - Batch metadata tagging
+    - Archival operations
+    
+    **Parameters:**
+    - **document_ids**: List of document IDs (max 100)
+    - **metadata_updates**: Metadata fields to apply to all documents
+    
+    **Behavior:**
+    - Processes documents individually
+    - Continues on errors, reports failures
+    - Only updates fields that are provided (partial updates)
+    - Triggers reindexing if collection changes
+    
+    **Permissions:** Requires `write` permission
+    
+    **Returns:** Summary with success/failure counts and error details
+    """
+    try:
+        updated_ids: List[int] = []
+        failed_ids: List[int] = []
+        errors: Dict[int, str] = {}
+        collections_to_reindex: set = set()
+        
+        for doc_id in bulk_update.document_ids:
+            try:
+                doc = await db.get(Document, doc_id)
+                if not doc:
+                    failed_ids.append(doc_id)
+                    errors[doc_id] = "Document not found"
+                    continue
+                
+                # Apply updates
+                if bulk_update.metadata_updates.description is not None:
+                    doc.description = bulk_update.metadata_updates.description
+                
+                if bulk_update.metadata_updates.is_public is not None:
+                    doc.is_public = bulk_update.metadata_updates.is_public
+                
+                if bulk_update.metadata_updates.collection_id is not None:
+                    old_collection = doc.collection_id
+                    new_collection = bulk_update.metadata_updates.collection_id.strip()
+                    if old_collection != new_collection:
+                        # Clean up old collection vectors
+                        if old_collection:
+                            try:
+                                delete_embeddings_for_doc(collection_id=old_collection, doc_id=str(doc_id))
+                            except Exception as ve:
+                                logger.warning(f"Failed to delete embeddings for doc {doc_id}: {ve}")
+                        
+                        doc.collection_id = new_collection
+                        doc.is_indexed = False
+                        doc.indexed_at = None
+                        collections_to_reindex.add(new_collection)
+                
+                if bulk_update.metadata_updates.metadata is not None:
+                    # Merge with existing metadata
+                    old_metadata = doc.meta_data or {}
+                    doc.meta_data = {**old_metadata, **bulk_update.metadata_updates.metadata}
+                
+                if bulk_update.metadata_updates.created_by is not None:
+                    doc.created_by = bulk_update.metadata_updates.created_by
+                
+                doc.updated_by = api_key_info.get_user_id()
+                
+                await db.commit()
+                await db.refresh(doc)
+                updated_ids.append(doc_id)
+                
+            except Exception as e:
+                failed_ids.append(doc_id)
+                errors[doc_id] = str(e)
+                logger.error(f"Error updating document {doc_id} in bulk operation: {e}")
+                await db.rollback()
+        
+        # Schedule reindexing for affected collections
+        for collection_id in collections_to_reindex:
+            if background_tasks and collection_id:
+                try:
+                    job_id = register_document_index_job(collection_id, document_ids=None)
+                    background_tasks.add_task(
+                        start_background_document_indexing,
+                        collection_id,
+                        job_id
+                    )
+                except Exception as e:
+                    logger.warning(f"Failed to schedule reindexing for collection {collection_id}: {e}")
+        
+        # Log audit action
+        await log_audit_action(
+            user_id=api_key_info.get_user_id(),
+            action="bulk_update_metadata",
+            resource_type="document",
+            resource_id="multiple",
+            details={
+                "updated_count": len(updated_ids),
+                "failed_count": len(failed_ids),
+                "updated_ids": updated_ids,
+                "failed_ids": failed_ids,
+                "updates": bulk_update.metadata_updates.dict(exclude_none=True)
+            },
+            request=request,
+            api_key_name=api_key_info.name
+        )
+        
+        return BulkMetadataUpdateResponse(
+            updated_count=len(updated_ids),
+            failed_count=len(failed_ids),
+            updated_ids=updated_ids,
+            failed_ids=failed_ids,
+            errors=errors if errors else None
+        )
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error in bulk metadata update: {e}")
+        raise HTTPException(status_code=500, detail=f"Error in bulk metadata update: {str(e)}")
+
 
 # Collection Management Models
 class CreateCollectionRequest(BaseModel):
