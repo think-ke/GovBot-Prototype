@@ -482,9 +482,20 @@ def generate_llamaindex_agent(agencies: Optional[Union[str, List[str]]] = None) 
     
     # Build and format the system prompt with agency-specific name/context
     base_prompt = build_system_prompt(agencies)
-    formatted_system_prompt = base_prompt.format(
-        collections=yaml.dump(collection_dict) if collection_dict else "No collections available"
-    )
+    
+    # Format collections in a readable way (collection name as key instead of ID)
+    if collection_dict:
+        readable_collections = {}
+        for cid, info in collection_dict.items():
+            collection_name = info.get("collection_name", cid)
+            readable_collections[collection_name] = {
+                "description": info.get("collection_description", "")
+            }
+        collections_text = yaml.dump(readable_collections, default_flow_style=False)
+    else:
+        collections_text = "No collections available"
+    
+    formatted_system_prompt = base_prompt.format(collections=collections_text)
     
     # Create the FunctionAgent
     agent = FunctionAgent(
