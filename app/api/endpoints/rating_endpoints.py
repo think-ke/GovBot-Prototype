@@ -20,6 +20,10 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
+# IMPORTANT: Route ordering matters in FastAPI!
+# More specific routes (like /ratings/stats) must be defined BEFORE parametrized routes (like /ratings/{rating_id})
+# Current order needs fixing: TODO: Move get_rating_stats before get_rating
+
 # Pydantic models for request and response
 class RatingRequest(BaseModel):
     """Request model for submitting a rating."""
@@ -198,6 +202,96 @@ async def create_rating(
         logger.error(f"Error creating rating: {str(e)}")
         raise HTTPException(status_code=500, detail="Failed to create rating")
 
+@router.get("/ratings/stats", response_model=RatingStatsResponse)
+async def get_rating_stats(
+    session_id: Optional[str] = Query(None, description="Get stats for specific session"),
+    message_id: Optional[str] = Query(None, description="Get stats for specific message"),
+    user_id: Optional[str] = Query(None, description="Get stats for specific user"),
+    days: int = Query(30, ge=1, le=365, description="Number of days to include in stats"),
+    db: AsyncSession = Depends(get_db),
+    api_key_info: APIKeyInfo = Depends(require_read_permission)
+) -> RatingStatsResponse:
+    """
+    Get rating statistics with optional filtering.
+    
+    NOTE: This must be BEFORE /ratings/{rating_id} to avoid 'stats' being parsed as rating_id
+    """
+    try:
+        # Build base query conditions
+        conditions = []
+        if session_id:
+            conditions.append(MessageRating.session_id == session_id)
+        if message_id:
+            conditions.append(MessageRating.message_id == message_id)
+        if user_id:
+            conditions.append(MessageRating.user_id == user_id)
+        
+        # Add date filter
+        from datetime import timedelta
+        since_date = datetime.now(timezone.utc) - timedelta(days=days)
+        conditions.append(MessageRating.created_at >= since_date)
+        
+        # Get total count and average rating
+        count_stmt = select(func.count(MessageRating.id), func.avg(MessageRating.rating))
+        if conditions:
+            count_stmt = count_stmt.where(and_(*conditions))
+        
+        count_result = await db.execute(count_stmt)
+        total_ratings, avg_rating = count_result.first()
+        
+        if total_ratings == 0:
+            return RatingStatsResponse(
+                session_id=session_id,
+                message_id=message_id,
+                total_ratings=0,
+                average_rating=0.0,
+                rating_distribution={},
+                recent_feedback=[]
+            )
+        
+        # Get rating distribution
+        dist_stmt = select(MessageRating.rating, func.count(MessageRating.rating)).group_by(MessageRating.rating)
+        if conditions:
+            dist_stmt = dist_stmt.where(and_(*conditions))
+        
+        dist_result = await db.execute(dist_stmt)
+        rating_distribution = {rating: count for rating, count in dist_result.all()}
+        
+        # Get recent feedback (with text)
+        feedback_stmt = (
+            select(MessageRating)
+            .where(MessageRating.feedback_text.isnot(None))
+        )
+        if conditions:
+            feedback_stmt = feedback_stmt.where(and_(*conditions))
+        
+        feedback_stmt = feedback_stmt.order_by(desc(MessageRating.created_at)).limit(10)
+        feedback_result = await db.execute(feedback_stmt)
+        recent_feedback_records = feedback_result.scalars().all()
+        
+        recent_feedback = [
+            {
+                "rating": record.rating,
+                "feedback_text": record.feedback_text,
+                "created_at": record.created_at.isoformat(),
+                "user_id": record.user_id
+            }
+            for record in recent_feedback_records
+        ]
+        
+        return RatingStatsResponse(
+            session_id=session_id,
+            message_id=message_id,
+            total_ratings=total_ratings,
+            average_rating=float(avg_rating),
+            rating_distribution=rating_distribution,
+            recent_feedback=recent_feedback
+        )
+        
+    except Exception as e:
+        logger.error(f"Error getting rating stats: {str(e)}")
+        raise HTTPException(status_code=500, detail="Failed to get rating statistics")
+
 @router.get("/ratings/{rating_id}", response_model=RatingResponse)
 async def get_rating(
     rating_id: int = Path(..., description="The ID of the rating to retrieve"),
@@ -369,94 +463,10 @@ async def list_ratings(
             for rating in ratings
         ]
         
+        
     except Exception as e:
         logger.error(f"Error listing ratings: {str(e)}")
         raise HTTPException(status_code=500, detail="Failed to list ratings")
 
-@router.get("/ratings/stats", response_model=RatingStatsResponse)
-async def get_rating_stats(
-    session_id: Optional[str] = Query(None, description="Get stats for specific session"),
-    message_id: Optional[str] = Query(None, description="Get stats for specific message"),
-    user_id: Optional[str] = Query(None, description="Get stats for specific user"),
-    days: int = Query(30, ge=1, le=365, description="Number of days to include in stats"),
-    db: AsyncSession = Depends(get_db),
-    api_key_info: APIKeyInfo = Depends(require_read_permission)
-) -> RatingStatsResponse:
-    """
-    Get rating statistics with optional filtering.
-    """
-    try:
-        # Build base query conditions
-        conditions = []
-        if session_id:
-            conditions.append(MessageRating.session_id == session_id)
-        if message_id:
-            conditions.append(MessageRating.message_id == message_id)
-        if user_id:
-            conditions.append(MessageRating.user_id == user_id)
-        
-        # Add date filter
-        from datetime import timedelta
-        since_date = datetime.now(timezone.utc) - timedelta(days=days)
-        conditions.append(MessageRating.created_at >= since_date)
-        
-        # Get total count and average rating
-        count_stmt = select(func.count(MessageRating.id), func.avg(MessageRating.rating))
-        if conditions:
-            count_stmt = count_stmt.where(and_(*conditions))
-        
-        count_result = await db.execute(count_stmt)
-        total_ratings, avg_rating = count_result.first()
-        
-        if total_ratings == 0:
-            return RatingStatsResponse(
-                session_id=session_id,
-                message_id=message_id,
-                total_ratings=0,
-                average_rating=0.0,
-                rating_distribution={},
-                recent_feedback=[]
-            )
-        
-        # Get rating distribution
-        dist_stmt = select(MessageRating.rating, func.count(MessageRating.rating)).group_by(MessageRating.rating)
-        if conditions:
-            dist_stmt = dist_stmt.where(and_(*conditions))
-        
-        dist_result = await db.execute(dist_stmt)
-        rating_distribution = {rating: count for rating, count in dist_result.all()}
-        
-        # Get recent feedback (with text)
-        feedback_stmt = (
-            select(MessageRating)
-            .where(MessageRating.feedback_text.isnot(None))
-        )
-        if conditions:
-            feedback_stmt = feedback_stmt.where(and_(*conditions))
-        
-        feedback_stmt = feedback_stmt.order_by(desc(MessageRating.created_at)).limit(10)
-        feedback_result = await db.execute(feedback_stmt)
-        recent_feedback_records = feedback_result.scalars().all()
-        
-        recent_feedback = [
-            {
-                "rating": record.rating,
-                "feedback_text": record.feedback_text,
-                "created_at": record.created_at.isoformat(),
-                "user_id": record.user_id
-            }
-            for record in recent_feedback_records
-        ]
-        
-        return RatingStatsResponse(
-            session_id=session_id,
-            message_id=message_id,
-            total_ratings=total_ratings,
-            average_rating=float(avg_rating),
-            rating_distribution=rating_distribution,
-            recent_feedback=recent_feedback
-        )
-        
-    except Exception as e:
-        logger.error(f"Error getting rating stats: {str(e)}")
-        raise HTTPException(status_code=500, detail="Failed to get rating statistics")
+# NOTE: /ratings/stats endpoint moved before /ratings/{rating_id} (see above) to avoid route conflicts
+

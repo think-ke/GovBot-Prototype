@@ -8,6 +8,7 @@ import logging
 import os
 import asyncio
 import tempfile
+import json
 from datetime import datetime, timezone, timedelta
 from typing import List, Dict, Optional, Union, Tuple, Any
 from uuid import uuid4
@@ -31,6 +32,34 @@ logger = logging.getLogger(__name__)
 # These entries are lightweight status snapshots so the API can report progress
 # without introducing a new persistence technology.
 document_index_jobs: Dict[str, Dict[str, Any]] = {}
+
+
+def sanitize_metadata_for_chromadb(metadata: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Convert complex metadata types to scalar values for ChromaDB.
+    ChromaDB only accepts str, int, float, or None for metadata values.
+    
+    Args:
+        metadata: Dictionary containing metadata that may have complex types
+        
+    Returns:
+        Dictionary with all complex types converted to JSON strings
+    """
+    sanitized = {}
+    for key, value in metadata.items():
+        if value is None or isinstance(value, (str, int, float, bool)):
+            sanitized[key] = value
+        elif isinstance(value, (dict, list)):
+            # Convert complex types to JSON strings
+            try:
+                sanitized[key] = json.dumps(value)
+            except (TypeError, ValueError) as e:
+                logger.warning(f"Could not serialize metadata key '{key}': {e}")
+                sanitized[key] = str(value)
+        else:
+            # Fallback: convert to string
+            sanitized[key] = str(value)
+    return sanitized
 
 
 def register_document_index_job(collection_id: str, document_ids: Optional[List[int]] = None) -> str:
@@ -584,12 +613,12 @@ async def index_documents_by_collection(collection_id: str) -> Dict[str, Any]:
                 doc_objects = [
                     Document(
                         text=doc.get("content", ""),
-                        metadata={
+                        metadata=sanitize_metadata_for_chromadb({
                             "title": doc.get("title", ""),
                             "url": doc.get("url", ""),
                             "doc_id": doc.get("id", ""),
                             "last_crawled": doc.get("last_crawled", "")
-                        }
+                        })
                     ) for doc in batch_docs
                 ]
                 
@@ -696,27 +725,23 @@ async def should_crawl_collection(collection_id: str) -> bool:
         # Default to allowing crawl if we can't check
         return True
 
-def start_background_indexing(collection_id: str) -> None:
+async def start_background_indexing(collection_id: str) -> None:
     """
     Start background indexing for a collection.
     
-    This function runs the indexing process in a background task.
-    It should be called after a crawl is completed.
+    This is now an async function that should be called with BackgroundTasks.add_task()
+    or awaited directly. It runs the indexing process for crawled webpages.
+    Should be called after a crawl is completed.
     
     Args:
         collection_id: The collection ID to process
     """
-    async def _run_indexing():
-        try:
-            logger.info(f"Starting background indexing for collection '{collection_id}'")
-            result = await index_documents_by_collection(collection_id)
-            logger.info(f"Background indexing completed for collection '{collection_id}': {result['status']}")
-        except Exception as e:
-            logger.error(f"Error in background indexing for collection '{collection_id}': {e}")
-    
-    # Create and start the task
-    asyncio.create_task(_run_indexing())
-    logger.info(f"Scheduled background indexing task for collection '{collection_id}'")
+    try:
+        logger.info(f"Starting background indexing for collection '{collection_id}'")
+        result = await index_documents_by_collection(collection_id)
+        logger.info(f"Background indexing completed for collection '{collection_id}': {result['status']}")
+    except Exception as e:
+        logger.error(f"Error in background indexing for collection '{collection_id}': {e}")
 
 async def get_unindexed_uploaded_documents(
     db: AsyncSession,
@@ -883,8 +908,11 @@ async def download_and_process_documents(
                 metadata.update(original_doc_data["metadata"])
             if parser_metadata:
                 metadata["parser_metadata"] = parser_metadata
+            
+            # Sanitize metadata to ensure ChromaDB compatibility
+            sanitized_metadata = sanitize_metadata_for_chromadb(metadata)
 
-            processed_documents.append(Document(text=text_content, metadata=metadata))
+            processed_documents.append(Document(text=text_content, metadata=sanitized_metadata))
 
         if not processed_documents:
             logger.warning("All downloaded documents failed to parse; skipping indexing batch")
@@ -1096,71 +1124,63 @@ async def has_unindexed_uploaded_documents(
         logger.error(f"Error checking for unindexed uploaded documents: {e}")
         return False, 0
 
-def start_background_document_indexing(collection_id: str, job_id: Optional[str] = None) -> str:
+async def start_background_document_indexing(collection_id: str, job_id: Optional[str] = None) -> str:
     """Schedule indexing of uploaded documents for a collection.
 
     Returns the job identifier used for status tracking.
+    
+    Note: This is now an async function that should be called with BackgroundTasks.add_task()
+    or awaited directly in an async context.
     """
     job_id = job_id or register_document_index_job(collection_id)
 
-    async def _run_document_indexing():
-        try:
-            logger.info(
-                f"Starting background document indexing for collection '{collection_id}' (job {job_id})"
-            )
-            result = await index_uploaded_documents_by_collection(collection_id, job_id=job_id)
-            logger.info(
-                f"Background document indexing completed for collection '{collection_id}' (job {job_id}): {result['status']}"
-            )
-
-            if result.get("status") == "completed":
-                try:
-                    from app.core.rag.tool_loader import refresh_collections
-
-                    refresh_collections(collection_id)
-                    update_document_index_job(
-                        job_id,
-                        message="Indexing completed and cache refreshed"
-                    )
-                except Exception as refresh_error:
-                    logger.warning(
-                        "Cache refresh after indexing failed for collection '%s': %s",
-                        collection_id,
-                        refresh_error,
-                    )
-                    update_document_index_job(
-                        job_id,
-                        message="Indexing completed, but cache refresh failed",
-                        error=str(refresh_error),
-                    )
-
-        except Exception as e:
-            logger.error(
-                "Error in background document indexing for collection '%s' (job %s): %s",
-                collection_id,
-                job_id,
-                e,
-            )
-            update_document_index_job(
-                job_id,
-                status="failed",
-                completed_at=datetime.now(timezone.utc).isoformat(),
-                error=str(e),
-                message=f"Indexing failed: {e}",
-            )
-
     try:
-        loop = asyncio.get_running_loop()
-    except RuntimeError:
-        loop = None
+        logger.info(
+            f"Starting background document indexing for collection '{collection_id}' (job {job_id})"
+        )
+        result = await index_uploaded_documents_by_collection(collection_id, job_id=job_id)
+        logger.info(
+            f"Background document indexing completed for collection '{collection_id}' (job {job_id}): {result['status']}"
+        )
 
-    if loop and loop.is_running():
-        loop.create_task(_run_document_indexing())
-    else:
-        asyncio.run(_run_document_indexing())
+        if result.get("status") == "completed":
+            try:
+                from app.core.rag.tool_loader import refresh_collections
+
+                refresh_collections(collection_id)
+                update_document_index_job(
+                    job_id,
+                    message="Indexing completed and cache refreshed"
+                )
+            except Exception as refresh_error:
+                logger.warning(
+                    "Cache refresh after indexing failed for collection '%s': %s",
+                    collection_id,
+                    refresh_error,
+                )
+                update_document_index_job(
+                    job_id,
+                    message="Indexing completed, but cache refresh failed",
+                    error=str(refresh_error),
+                )
+
+    except Exception as e:
+        logger.error(
+            "Error in background document indexing for collection '%s' (job %s): %s",
+            collection_id,
+            job_id,
+            e,
+        )
+        update_document_index_job(
+            job_id,
+            status="failed",
+            completed_at=datetime.now(timezone.utc).isoformat(),
+            error=str(e),
+            message=f"Indexing failed: {e}",
+        )
 
     logger.info(
-        "Scheduled background document indexing task for collection '%s' (job %s)",
+        "Completed background document indexing task for collection '%s' (job %s)",
         collection_id,
         job_id,
     )

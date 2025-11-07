@@ -11,6 +11,7 @@ import logging
 import mimetypes
 from fastapi import FastAPI, Depends, HTTPException, UploadFile, File, Form, BackgroundTasks, Query, APIRouter, Request, Path
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from datetime import datetime, timezone, timedelta
 import uuid
 import asyncio
@@ -343,6 +344,22 @@ class BulkMetadataUpdateResponse(BaseModel):
     failed_ids: List[int]
     errors: Optional[Dict[int, str]] = None
 
+class DocumentIndexJobStatus(BaseModel):
+    """Response model for background document indexing job status."""
+    job_id: str
+    collection_id: str
+    status: str
+    documents_total: int = 0
+    documents_processed: int = 0
+    documents_indexed: int = 0
+    progress_percent: float = 0.0
+    message: Optional[str] = None
+    error: Optional[str] = None
+    created_at: Optional[str] = None
+    started_at: Optional[str] = None
+    completed_at: Optional[str] = None
+    updated_at: Optional[str] = None
+
 
 # ===========================
 # Core Endpoints
@@ -467,12 +484,13 @@ async def upload_document(
                 index_job_id,
             )
 
-        # Generate access URL
-        access_url = minio_client.get_presigned_url(object_name)
+        # Generate direct download URL (no presigned URL needed for public documents)
+        access_url = f"/documents/{document.id}/download"
 
         # Return metadata with URL and background job ID to poll progress
         result = document.to_dict()
         result["access_url"] = access_url
+        result["download_url"] = access_url  # Alias for clarity
         result["index_job_id"] = index_job_id
         result["indexing_scheduled"] = bool(index_on_upload and index_job_id)
 
@@ -481,6 +499,151 @@ async def upload_document(
     except Exception as e:
         logger.error(f"Error uploading document: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Error uploading document: {str(e)}")
+
+@document_router.get("/{document_id}/download")
+async def download_document(
+    document_id: int,
+    db: AsyncSession = Depends(get_db),
+    api_key_info: APIKeyInfo = Depends(require_read_permission)
+):
+    """
+    Stream document content directly to the client.
+    This endpoint provides direct document access without presigned URLs.
+    Requires read permission.
+    
+    Args:
+        document_id: ID of the document to download
+        db: Database session
+        
+    Returns:
+        StreamingResponse with document content
+    """
+    try:
+        # Get document from database
+        document = await db.get(Document, document_id)
+        if not document:
+            raise HTTPException(status_code=404, detail="Document not found")
+        
+        # Update last accessed timestamp
+        document.last_accessed = datetime.now(timezone.utc)
+        await db.commit()
+        
+        # Get file from MinIO
+        try:
+            file_data, metadata = await run_in_threadpool(
+                minio_client.get_file,
+                document.object_name
+            )
+        except Exception as minio_error:
+            logger.error(f"Error retrieving file from MinIO: {str(minio_error)}")
+            raise HTTPException(status_code=404, detail="File not found in storage")
+        
+        # Return streaming response with proper headers
+        return StreamingResponse(
+            file_data,
+            media_type=document.content_type,
+            headers={
+                "Content-Disposition": f'inline; filename="{document.filename}"',
+                "Cache-Control": "public, max-age=3600",  # Cache for 1 hour
+            }
+        )
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error downloading document: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error downloading document: {str(e)}")
+
+# ===========================
+# Indexing progress endpoints
+# CRITICAL: These MUST be defined BEFORE /{document_id} route to avoid path conflicts
+# ===========================
+
+@document_router.get("/indexing-status", 
+                    response_model=Dict[str, Any],
+                    summary="Get document indexing status",
+                    description="Get indexing progress for uploaded documents in a specific collection",
+                    responses={
+                        200: {"description": "Indexing status retrieved successfully"},
+                        403: {"description": "Insufficient permissions"},
+                        500: {"description": "Internal server error"}
+                    })
+async def get_documents_indexing_status(
+    collection_id: str = Query(..., description="Collection ID to check indexing status for"),
+    db: AsyncSession = Depends(get_db),
+    api_key_info: APIKeyInfo = Depends(require_read_permission)
+):
+    """
+    Return indexing status for uploaded documents in a collection.
+    
+    **Parameters:**
+    - **collection_id**: Collection ID to check indexing status for
+    
+    **Permissions:** Requires `read` permission
+    
+    **Returns:** Document indexing statistics including total, indexed, unindexed counts and progress percentage
+    """
+    try:
+        from sqlalchemy import select, func
+        total = (await db.execute(select(func.count(Document.id)).where(Document.collection_id == collection_id))).scalar() or 0
+        indexed = (await db.execute(select(func.count(Document.id)).where((Document.collection_id == collection_id) & (Document.is_indexed == True)))).scalar() or 0
+        unindexed = max(total - indexed, 0)
+        progress = (indexed / total * 100.0) if total > 0 else 0.0
+        return {
+            "collection_id": collection_id,
+            "documents_total": total,
+            "indexed": indexed,
+            "unindexed": unindexed,
+            "progress_percent": round(progress, 1),
+        }
+    except Exception as e:
+        logger.error(f"Error getting documents indexing status: {e}")
+        raise HTTPException(status_code=500, detail=f"Error getting documents indexing status: {str(e)}")
+
+
+@document_router.get(
+    "/indexing-jobs/{job_id}",
+    response_model=DocumentIndexJobStatus,
+    summary="Get document indexing job status",
+    description="Retrieve the latest status for a specific background indexing job",
+    responses={
+        200: {"description": "Indexing job status retrieved successfully"},
+        403: {"description": "Insufficient permissions"},
+        404: {"description": "Job not found"},
+        500: {"description": "Internal server error"},
+    },
+)
+async def get_document_indexing_job_status(
+    job_id: str = Path(..., description="Indexing job identifier"),
+    api_key_info: APIKeyInfo = Depends(require_read_permission),
+):
+    job = get_document_index_job(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Indexing job not found")
+    return job
+
+
+@document_router.get(
+    "/indexing-jobs",
+    response_model=List[DocumentIndexJobStatus],
+    summary="List document indexing jobs",
+    description="List recent document indexing jobs, optionally filtered by collection",
+    responses={
+        200: {"description": "Indexing jobs listed successfully"},
+        403: {"description": "Insufficient permissions"},
+        500: {"description": "Internal server error"},
+    },
+)
+async def list_document_indexing_job_status(
+    collection_id: Optional[str] = Query(None, description="Optional collection ID to filter jobs"),
+    limit: int = Query(50, ge=1, le=500, description="Maximum number of jobs to return"),
+    api_key_info: APIKeyInfo = Depends(require_read_permission),
+):
+    return list_document_index_jobs(collection_id, limit)
+
+# ===========================
+# End indexing endpoints
+# ===========================
 
 @document_router.get("/{document_id}")
 async def get_document(
@@ -506,15 +669,16 @@ async def get_document(
             raise HTTPException(status_code=404, detail="Document not found")
         
         # Update last accessed timestamp
-        result.last_accessed = timezone.utc
+        result.last_accessed = datetime.now(timezone.utc)
         await db.commit()
         
-        # Generate access URL
-        access_url = minio_client.get_presigned_url(result.object_name)
+        # Generate direct download URL
+        access_url = f"/documents/{result.id}/download"
         
         # Return metadata with URL
         response = result.to_dict()
         response["access_url"] = access_url
+        response["download_url"] = access_url  # Alias for clarity
         
         return response
     
@@ -1234,22 +1398,7 @@ class DocumentIndexingStatusResponse(BaseModel):
     unindexed: int
     progress_percent: float
 
-
-class DocumentIndexJobStatus(BaseModel):
-    """Response model for background document indexing job status."""
-    job_id: str
-    collection_id: str
-    status: str
-    documents_total: int = 0
-    documents_processed: int = 0
-    documents_indexed: int = 0
-    progress_percent: float = 0.0
-    message: Optional[str] = None
-    error: Optional[str] = None
-    created_at: Optional[str] = None
-    started_at: Optional[str] = None
-    completed_at: Optional[str] = None
-    updated_at: Optional[str] = None
+# NOTE: DocumentIndexJobStatus moved to line ~350 (before endpoints that use it)
 
 class IndexingBreakdown(BaseModel):
     """Indexing breakdown for a specific content type."""
@@ -1279,6 +1428,8 @@ class ManualIndexResponse(BaseModel):
     status: str
     index_job_id: Optional[str] = None
     message: Optional[str] = None
+
+# NOTE: Indexing progress endpoints moved to before line 541 (before /{document_id} route)
 
 class WebpageLinkResponse(BaseModel):
     """Response model for webpage link data."""
@@ -1430,7 +1581,7 @@ async def start_crawl(
                         "Crawl completed, starting background indexing for collection '%s'",
                         request_data.collection_id
                     )
-                    start_background_indexing(request_data.collection_id)
+                    await start_background_indexing(request_data.collection_id)
                 else:
                     logger.info(
                         "Crawl finished with no pages crawled for collection '%s'; skipping indexing",
@@ -2081,89 +2232,8 @@ async def trigger_manual_indexing(
         logger.error("Error scheduling manual indexing: %s", exc)
         raise HTTPException(status_code=500, detail=f"Error scheduling indexing: {exc}")
 
-# Indexing progress endpoints
-@document_router.get("/indexing-status", 
-                    response_model=Dict[str, Any],
-                    summary="Get document indexing status",
-                    description="Get indexing progress for uploaded documents in a specific collection",
-                    responses={
-                        200: {"description": "Indexing status retrieved successfully"},
-                        403: {"description": "Insufficient permissions"},
-                        500: {"description": "Internal server error"}
-                    })
-async def get_documents_indexing_status(
-    collection_id: str = Query(..., description="Collection ID to check indexing status for"),
-    db: AsyncSession = Depends(get_db),
-    api_key_info: APIKeyInfo = Depends(require_read_permission)
-):
-    """
-    Return indexing status for uploaded documents in a collection.
-    
-    **Parameters:**
-    - **collection_id**: Collection ID to check indexing status for
-    
-    **Permissions:** Requires `read` permission
-    
-    **Returns:** Document indexing statistics including total, indexed, unindexed counts and progress percentage
-    """
-    try:
-        from sqlalchemy import select, func
-        total = (await db.execute(select(func.count(Document.id)).where(Document.collection_id == collection_id))).scalar() or 0
-        indexed = (await db.execute(select(func.count(Document.id)).where((Document.collection_id == collection_id) & (Document.is_indexed == True)))).scalar() or 0
-        unindexed = max(total - indexed, 0)
-        progress = (indexed / total * 100.0) if total > 0 else 0.0
-        return {
-            "collection_id": collection_id,
-            "documents_total": total,
-            "indexed": indexed,
-            "unindexed": unindexed,
-            "progress_percent": round(progress, 1),
-        }
-    except Exception as e:
-        logger.error(f"Error getting documents indexing status: {e}")
-        raise HTTPException(status_code=500, detail=f"Error getting documents indexing status: {str(e)}")
-
-
-@document_router.get(
-    "/indexing-jobs/{job_id}",
-    response_model=DocumentIndexJobStatus,
-    summary="Get document indexing job status",
-    description="Retrieve the latest status for a specific background indexing job",
-    responses={
-        200: {"description": "Indexing job status retrieved successfully"},
-        403: {"description": "Insufficient permissions"},
-        404: {"description": "Job not found"},
-        500: {"description": "Internal server error"},
-    },
-)
-async def get_document_indexing_job_status(
-    job_id: str = Path(..., description="Indexing job identifier"),
-    api_key_info: APIKeyInfo = Depends(require_read_permission),
-):
-    job = get_document_index_job(job_id)
-    if not job:
-        raise HTTPException(status_code=404, detail="Indexing job not found")
-    return job
-
-
-@document_router.get(
-    "/indexing-jobs",
-    response_model=List[DocumentIndexJobStatus],
-    summary="List document indexing jobs",
-    description="List recent document indexing jobs, optionally filtered by collection",
-    responses={
-        200: {"description": "Indexing jobs listed successfully"},
-        403: {"description": "Insufficient permissions"},
-        500: {"description": "Internal server error"},
-    },
-)
-async def list_document_indexing_job_status(
-    collection_id: Optional[str] = Query(None, description="Optional collection ID to filter jobs"),
-    limit: int = Query(50, ge=1, le=500, description="Maximum number of jobs to return"),
-    api_key_info: APIKeyInfo = Depends(require_read_permission),
-):
-    return list_document_index_jobs(collection_id, limit)
-
+# NOTE: Indexing progress endpoints moved to after line 1330 (after DocumentIndexJobStatus model)
+# to ensure they're defined BEFORE /{document_id} routes and avoid path conflicts
 
 @collection_router.get("/{collection_id}/indexing-status", 
                       response_model=Dict[str, Any],
@@ -2235,6 +2305,20 @@ async def create_collection(
     """
     try:
         import uuid
+        from sqlalchemy import select
+        from sqlalchemy.exc import IntegrityError
+        
+        # Check if collection with this name already exists
+        stmt = select(Collection).where(Collection.name == request_data.name)
+        result = await db.execute(stmt)
+        existing = result.scalar_one_or_none()
+        
+        if existing:
+            raise HTTPException(
+                status_code=409,
+                detail=f"Collection with name '{request_data.name}' already exists (ID: {existing.id})"
+            )
+        
         collection_id = str(uuid.uuid4())
         # Create DB row
         db_obj = Collection(
@@ -2245,8 +2329,17 @@ async def create_collection(
             api_key_name=api_key_info.name,
         )
         db.add(db_obj)
-        await db.commit()
-        await db.refresh(db_obj)
+        
+        try:
+            await db.commit()
+            await db.refresh(db_obj)
+        except IntegrityError as ie:
+            await db.rollback()
+            # Handle race condition where collection was created between check and insert
+            raise HTTPException(
+                status_code=409,
+                detail=f"Collection with name '{request_data.name}' already exists"
+            )
         
         # Log audit action
         await log_audit_action(
@@ -2282,6 +2375,9 @@ async def create_collection(
             webpage_count=0,
         )
     
+    except HTTPException:
+        # Re-raise HTTPExceptions (like 409 Conflict) with their original status code
+        raise
     except Exception as e:
         logger.error(f"Error creating collection: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Error creating collection: {str(e)}")
@@ -2455,6 +2551,13 @@ async def update_collection(
         # Track changes for audit
         changes = {}
         if request_data.name is not None and request_data.name != db_obj.name:
+            # Check if new name conflicts with existing collection
+            from sqlalchemy import select
+            stmt = select(Collection).where(Collection.name == request_data.name)
+            existing = (await db.execute(stmt)).scalar_one_or_none()
+            if existing and existing.id != collection_id:
+                raise HTTPException(status_code=409, detail=f"Collection with name '{request_data.name}' already exists")
+            
             changes["name"] = {"old": db_obj.name, "new": request_data.name}
             db_obj.name = request_data.name
         if request_data.description is not None and request_data.description != db_obj.description:
@@ -2620,18 +2723,27 @@ async def get_all_collection_statistics(
 
 # Register all routers with the main app
 app.include_router(core_router)
-# Import the chat endpoints router
-from app.api.endpoints.chat_endpoints import router as chat_router
-app.include_router(chat_router, prefix="/chat", tags=["Chat"])
-# Import the chat event endpoints router
-from app.api.endpoints.chat_event_endpoints import router as chat_event_router
-app.include_router(chat_event_router, prefix="/chat", tags=["Chat"])
+
+# IMPORTANT: Register routers with more specific paths BEFORE routers with parametrized paths
+# The rating_router has /ratings/* routes, which must be registered BEFORE chat_router's /{session_id}
+# to avoid /chat/ratings being matched as /chat/{session_id} with session_id="ratings"
+
 # Import the rating endpoints router
 from app.api.endpoints.rating_endpoints import router as rating_router
-app.include_router(rating_router, prefix="/chat", tags=["Chat"])
+app.include_router(rating_router, prefix="/chat", tags=["Chat", "Ratings"])
+
+# Import the chat event endpoints router (also has specific paths like /events/*)
+from app.api.endpoints.chat_event_endpoints import router as chat_event_router
+app.include_router(chat_event_router, prefix="/chat", tags=["Chat"])
+
+# Import the chat endpoints router (has parametrized /{session_id} route - must come LAST)
+from app.api.endpoints.chat_endpoints import router as chat_router
+app.include_router(chat_router, prefix="/chat", tags=["Chat"])
+
 # Import the audit endpoints router
 from app.api.endpoints.audit_endpoints import router as audit_router
 app.include_router(audit_router, prefix="/admin", tags=["Audit"])
+
 # Import the transcription endpoints router
 from app.api.endpoints.transcription_endpoints import router as transcription_router
 app.include_router(transcription_router)

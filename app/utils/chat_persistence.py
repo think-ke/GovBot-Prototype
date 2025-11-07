@@ -263,7 +263,7 @@ class ChatPersistenceService:
             session_id: The session ID to look up
             
         Returns:
-            Dictionary with 'chat' and 'messages' if found, None otherwise
+            Dictionary with chat data and messages as dicts if found, None otherwise
         """
         try:
             # First get the chat
@@ -280,9 +280,23 @@ class ChatPersistenceService:
             messages_result = await db.execute(messages_query)
             messages = messages_result.scalars().all()
             
+            # Convert SQLAlchemy models to dictionaries
+            message_dicts = []
+            for msg in messages:
+                message_dicts.append({
+                    "message_id": msg.message_id,
+                    "message_type": msg.message_type,
+                    "content": msg.message_object,  # message_object contains the message content
+                    "timestamp": msg.timestamp,
+                    "metadata": msg.history  # history contains metadata for assistant messages
+                })
+            
             return {
-                "chat": chat,
-                "messages": messages
+                "session_id": chat.session_id,
+                "user_id": chat.user_id,
+                "created_at": chat.created_at,
+                "updated_at": chat.updated_at,
+                "messages": message_dicts
             }
             
         except Exception as e:

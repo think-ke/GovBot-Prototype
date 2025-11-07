@@ -342,7 +342,14 @@ def create_llamaindex_tools(agencies: Optional[Union[str, List[str]]] = None) ->
         handle = canonical_to_alias.get(canonical) or _slugify(display)
         tool_name = f"query_{handle}"
         async_fn = _make_query_fn(handle if handle in get_index_dict() else canonical, display)
-        desc = f"Query the {display} collection for information relevant to its domain."
+        
+        # Use collection description from database if available, otherwise use generic description
+        collection_desc = info.get("collection_description", "")
+        if collection_desc and collection_desc.strip():
+            desc = f"Query the {display} collection. Here's what you need to know about it: {collection_desc}"
+        else:
+            desc = f"Query the {display} collection for information relevant to its domain."
+        
         dynamic_tools[handle] = FunctionTool.from_defaults(async_fn=async_fn, name=tool_name, description=desc)
 
     # Maintain legacy aliases explicitly if they exist in index dict (ensures backwards compat)
