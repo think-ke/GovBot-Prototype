@@ -27,7 +27,7 @@ services:
       - MINIO_ACCESS_KEY=${MINIO_ACCESS_KEY:-minioadmin}
       - MINIO_SECRET_KEY=${MINIO_SECRET_KEY:-minioadmin}
       - MINIO_BUCKET_NAME=${MINIO_BUCKET_NAME:-govstack-docs}
-      - USE_UVLOOP=${USE_UVLOOP:-false}  # Control uvloop usage
+      - USE_UVLOOP=${USE_UVLOOP:-false}
     networks:
       - govstack-net
     depends_on:
@@ -52,51 +52,30 @@ services:
       - govstack-net
     restart: "no"
 
-  postgres:
-    image: postgres:17.5
+  govstack_postgres:
+    image: postgres:15
+    restart: always
     environment:
-      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-postgres}
       - POSTGRES_USER=postgres
-      - POSTGRES_DB=govstackdb
-      # Create additional database for Metabase
-      - POSTGRES_MULTIPLE_DATABASES=govstackdb,metabase
+      - POSTGRES_PASSWORD=aisha
+      - POSTGRES_DB=govstack_db
     volumes:
       - ./data/postgres:/var/lib/postgresql/data
-      - ./scripts/postgres-init:/docker-entrypoint-initdb.d
     ports:
       - "5432:5432"
     networks:
       - govstack-net
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      test: ["CMD-SHELL", "pg_isready -U govstack_user"]
       interval: 10s
       timeout: 5s
       retries: 5
 
-  backup:
-    build:
-      context: .
-      dockerfile: docker/backup.Dockerfile
-    environment:
-      - POSTGRES_HOST=postgres
-      - POSTGRES_PORT=5432
-      - POSTGRES_USER=postgres
-      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-postgres}
-      - POSTGRES_DB=govstackdb
-      - BACKUP_SCHEDULE=0 2 * * *     # Daily at 2 AM for production
-      - BACKUP_RETENTION_DAYS=30      # Keep 30 days for production
-    volumes:
-      - ./backups/prod:/backups
-    depends_on:
-      - postgres
-    networks:
-      - govstack-net
-    restart: unless-stopped
-
-  chroma:
+  govstack_chromadb:
     image: chromadb/chroma:latest
+    restart: always
     ports:
-      - "8050:8000"  # Map host port 8050 to container port 8000
+      - "8050:8000"  # Host port 8050 -> container port 8000
     environment:
       - CHROMA_SERVER_AUTHN_CREDENTIALS_FILE=/chroma/server.htpasswd
       - CHROMA_SERVER_AUTHN_PROVIDER=chromadb.auth.basic_authn.BasicAuthenticationServerProvider
@@ -138,9 +117,9 @@ services:
     ports:
       - "${ANALYTICS_PORT:-8005}:8005"
     environment:
-      - DATABASE_URL=postgresql+asyncpg://postgres:${POSTGRES_PASSWORD:-postgres}@postgres:5432/govstackdb
+      - DATABASE_URL=postgresql+asyncpg://govstack_user:govstack_pass@govstack_postgres:5432/govstack_db
     depends_on:
-      postgres:
+      govstack_postgres:
         condition: service_healthy
     networks:
       - govstack-net
@@ -174,65 +153,7 @@ services:
       start_period: 30s
     restart: unless-stopped
     profiles:
-      - standalone-analytics  # Only start this service when explicitly requested
-
-  # admin-dashboard:
-  #   build:
-  #     context: ./admin-dashboard
-  #     dockerfile: Dockerfile
-  #   ports:
-  #     - "${ADMIN_DASHBOARD_PORT:-3010}:3010"
-  #   environment:
-  #     - NODE_ENV=production
-  #     - NEXT_TELEMETRY_DISABLED=1
-  #     - API_URL=http://govstack-server:5000
-  #     - NEXT_PUBLIC_ANALYTICS_API_URL=http://analytics:8005/analytics
-  #   depends_on:
-  #     - govstack-server
-  #     - analytics
-  #   networks:
-  #     - govstack-net
-  #   healthcheck:
-  #     test: ["CMD", "curl", "-f", "http://localhost:3010/api/health"]
-  #     interval: 30s
-  #     timeout: 10s
-  #     retries: 5
-  #     start_period: 30s
-  #   restart: unless-stopped
-
-  # metabase:
-  #   image: metabase/metabase:latest
-  #   container_name: metabase
-  #   ports:
-  #     - "${METABASE_PORT:-3000}:3000"
-  #   environment:
-  #     # Use PostgreSQL as the application database
-  #     - MB_DB_TYPE=postgres
-  #     - MB_DB_DBNAME=metabase
-  #     - MB_DB_PORT=5432
-  #     - MB_DB_USER=postgres
-  #     - MB_DB_PASS=${POSTGRES_PASSWORD:-postgres}
-  #     - MB_DB_HOST=postgres
-  #     # Java heap settings for performance (recommended 2GB for production)
-  #     - JAVA_OPTS=-Xmx2g -Xms1g
-  #     # Optional: Encryption secret key for security
-  #     - MB_ENCRYPTION_SECRET_KEY=${METABASE_ENCRYPTION_SECRET_KEY:-}
-  #     # Optional: Site URL for email links
-  #     - MB_SITE_URL=${METABASE_SITE_URL:-http://localhost:3000}
-  #   volumes:
-  #     - ./data/metabase:/metabase-data
-  #   depends_on:
-  #     postgres:
-  #       condition: service_healthy
-  #   networks:
-  #     - govstack-net
-  #   healthcheck:
-  #     test: ["CMD", "curl", "-f", "http://localhost:3000/api/health"]
-  #     interval: 30s
-  #     timeout: 10s
-  #     retries: 5
-  #     start_period: 120s  # Metabase takes time to initialize
-  #   restart: unless-stopped
+      - standalone-analytics
 
 volumes:
   data:

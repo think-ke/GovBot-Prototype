@@ -218,12 +218,14 @@ async def process_chat(
         chat_response = ChatResponse(
             session_id=session_id,
             answer=final_answer,
-            sources=agent_output.sources,
+            sources=[s.model_dump() if hasattr(s, "model_dump") else s for s in agent_output.sources],
             confidence=agent_output.confidence,
             retriever_type=agent_output.retriever_type,
-            usage=agent_output.usage,
-            recommended_follow_up_questions=agent_output.recommended_follow_up_questions,
-            trace_id=None  # Can be enhanced with tracing later
+            usage=agent_output.usage.model_dump() if hasattr(agent_output.usage, "model_dump") else agent_output.usage,
+            recommended_follow_up_questions=[
+                q.model_dump() if hasattr(q, "model_dump") else q for q in agent_output.recommended_follow_up_questions
+            ],
+            trace_id=None
         )
         
         logger.info(f"Successfully processed chat for session: {session_id}")

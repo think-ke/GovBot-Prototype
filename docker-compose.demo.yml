@@ -1,0 +1,41 @@
+services:
+  chainlit-demo:
+    build: 
+      context: ./chainlit
+      dockerfile: Dockerfile.chainlit
+    ports:
+      - "8000:8000"
+    environment:
+      - CHAINLIT_HOST=0.0.0.0
+      - CHAINLIT_PORT=8000
+      - API_BASE_URL=https://govstack-api.think.ke
+      - GOVSTACK_API_KEY=b689ccc1-d925-4c4e-871a-379fcd79f269
+    env_file:
+      - .env
+    networks:
+      - govstack-network
+
+  admin-dashboard:
+    image: govstack-server-admin-dashboard:latest
+    ports:
+      - "${ADMIN_DASHBOARD_PORT:-3010}:3010"
+    environment:
+      - NODE_ENV=production
+      - NEXT_TELEMETRY_DISABLED=1
+      - API_URL=https://govstack-api.think.ke
+      - NEXT_PUBLIC_ANALYTICS_API_URL=https://govstack-analytics.think.ke
+    env_file:
+      - .env
+    networks:
+      - govstack-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3010/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped
+
+networks:
+  govstack-network:
+    external: true
