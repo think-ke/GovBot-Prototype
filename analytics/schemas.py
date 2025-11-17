@@ -352,12 +352,14 @@ class CollectionHealthItem(BaseModel):
     model_config = ConfigDict(json_schema_extra={
         "examples": [{
             "collection_id": "odpc",
+            "collection_name": "Office of the Data Protection Commissioner",
             "webpages": {"pages": 75, "ok": 69, "redirects": 0, "client_err": 5, "server_err": 0, "indexed": 74},
             "documents": {"count": 1, "indexed": 1, "public": 0, "total_size": 457026},
             "freshness": {"last_indexed_at": "2025-05-22T15:56:26.530Z"}
         }]
     })
     collection_id: Optional[str] = None
+    collection_name: Optional[str] = None
     webpages: CollectionWebpagesHealth
     documents: CollectionDocumentsHealth
     freshness: CollectionFreshness

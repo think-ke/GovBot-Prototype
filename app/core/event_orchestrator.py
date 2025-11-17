@@ -7,7 +7,7 @@ from app.core.rag.tool_loader import tools, collection_dict
 from llama_index.core import Settings
 from pydantic_ai import Agent
 from llama_index.llms.openai import OpenAI
-from llama_index.embeddings.openai import OpenAIEmbedding
+from llama_index.embeddings.huggingface import HuggingFaceEmbedding
 from pydantic import BaseModel, Field
 from typing import List, Optional, Any, Dict, Union
 from pydantic_ai.messages import ModelMessage, ModelMessagesTypeAdapter
@@ -38,8 +38,10 @@ client = OpenAI(
     model=os.getenv("RUNPOD_MODEL_NAME", "gpt-4o"),
 )
 
-Settings.embed_model = OpenAIEmbedding(
-    model="text-embedding-3-small", embed_batch_size=100
+Settings.embed_model = HuggingFaceEmbedding(
+    model_name="BAAI/bge-small-en-v1.5",
+    device="cpu",
+    embed_batch_size=100
 )
 
 class EventTrackingContext:
@@ -203,8 +205,20 @@ def generate_agent_with_events() -> Agent[None, Output]:
     
     if os.getenv("GROQ_MODEL_NAME") is None:
         logger.info("Creating OpenAI-based agent with events (GROQ_MODEL_NAME not set)")
-        collection_yml = yaml.dump(collection_dict, default_flow_style=False)
-        logger.debug(f"Collections configuration: {len(collection_dict)} collections loaded")
+        
+        # Format collections in a readable way (collection name as key instead of ID)
+        if collection_dict:
+            readable_collections = {}
+            for cid, info in collection_dict.items():
+                collection_name = info.get("collection_name", cid)
+                readable_collections[collection_name] = {
+                    "description": info.get("collection_description", "")
+                }
+            collection_yml = yaml.dump(readable_collections, default_flow_style=False)
+            logger.debug(f"Collections configuration: {len(collection_dict)} collections loaded")
+        else:
+            collection_yml = "No collections available"
+            logger.debug("No collections available")
         
         # Initialize the agent with the system prompt and enhanced tools
         agent = Agent(
@@ -244,8 +258,20 @@ def generate_agent() -> Agent[None, Output]:
     
     if os.getenv("GROQ_MODEL_NAME") is None:
         logger.info("Creating OpenAI-based agent (GROQ_MODEL_NAME not set)")
-        collection_yml = yaml.dump(collection_dict, default_flow_style=False)
-        logger.debug(f"Collections configuration: {len(collection_dict)} collections loaded")
+        
+        # Format collections in a readable way (collection name as key instead of ID)
+        if collection_dict:
+            readable_collections = {}
+            for cid, info in collection_dict.items():
+                collection_name = info.get("collection_name", cid)
+                readable_collections[collection_name] = {
+                    "description": info.get("collection_description", "")
+                }
+            collection_yml = yaml.dump(readable_collections, default_flow_style=False)
+            logger.debug(f"Collections configuration: {len(collection_dict)} collections loaded")
+        else:
+            collection_yml = "No collections available"
+            logger.debug("No collections available")
         
         # Initialize the agent with the system prompt and original tools
         agent = Agent(

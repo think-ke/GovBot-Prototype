@@ -8,8 +8,10 @@ import logging
 import os
 import asyncio
 import tempfile
+import json
 from datetime import datetime, timezone, timedelta
 from typing import List, Dict, Optional, Union, Tuple, Any
+from uuid import uuid4
 from sqlalchemy import select, and_, update, func
 from sqlalchemy.ext.asyncio import AsyncSession
 import chromadb
@@ -17,6 +19,7 @@ import chromadb
 from app.db.models.webpage import Webpage
 from app.db.models.document import Document as DocumentModel
 from app.utils.storage import MinioClient
+from app.utils.document_parsers import DocumentParseError, parse_document_file
 
 from opentelemetry.instrumentation.llamaindex import LlamaIndexInstrumentor
 LlamaIndexInstrumentor().instrument()
@@ -24,6 +27,119 @@ LlamaIndexInstrumentor().instrument()
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
+
+# In-memory job tracking for document indexing tasks.
+# These entries are lightweight status snapshots so the API can report progress
+# without introducing a new persistence technology.
+document_index_jobs: Dict[str, Dict[str, Any]] = {}
+
+
+def sanitize_metadata_for_chromadb(metadata: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Convert complex metadata types to scalar values for ChromaDB.
+    ChromaDB only accepts str, int, float, or None for metadata values.
+    
+    Args:
+        metadata: Dictionary containing metadata that may have complex types
+        
+    Returns:
+        Dictionary with all complex types converted to JSON strings
+    """
+    sanitized = {}
+    for key, value in metadata.items():
+        if value is None or isinstance(value, (str, int, float, bool)):
+            sanitized[key] = value
+        elif isinstance(value, (dict, list)):
+            # Convert complex types to JSON strings
+            try:
+                sanitized[key] = json.dumps(value)
+            except (TypeError, ValueError) as e:
+                logger.warning(f"Could not serialize metadata key '{key}': {e}")
+                sanitized[key] = str(value)
+        else:
+            # Fallback: convert to string
+            sanitized[key] = str(value)
+    return sanitized
+
+
+def register_document_index_job(collection_id: str, document_ids: Optional[List[int]] = None) -> str:
+    """Create a new document indexing job entry.
+
+    Args:
+        collection_id: Collection the job will process.
+        document_ids: Optional list of source document identifiers for progress correlation.
+    """
+    job_id = str(uuid4())
+    now = datetime.now(timezone.utc).isoformat()
+    normalized_document_ids = [int(doc_id) for doc_id in document_ids or []]
+
+    document_index_jobs[job_id] = {
+        "job_id": job_id,
+        "collection_id": collection_id,
+        "status": "pending",
+        "documents_total": len(normalized_document_ids),
+        "documents_processed": 0,
+        "documents_indexed": 0,
+        "progress_percent": 0.0,
+        "document_ids": normalized_document_ids,
+        "message": "Queued for background indexing",
+        "error": None,
+        "created_at": now,
+        "started_at": None,
+        "completed_at": None,
+        "updated_at": now,
+    }
+    return job_id
+
+
+def update_document_index_job(job_id: str, **updates: Any) -> None:
+    """Update fields on a tracked document indexing job."""
+    job = document_index_jobs.get(job_id)
+    if not job:
+        return
+
+    sanitized_updates: Dict[str, Any] = {}
+    for key, value in updates.items():
+        if key == "progress_percent" and value is not None:
+            try:
+                value = max(0.0, min(float(value), 100.0))
+            except (TypeError, ValueError):
+                continue
+
+        if value is not None or key == "message":
+            sanitized_updates[key] = value
+
+    if not sanitized_updates:
+        return
+
+    job.update(sanitized_updates)
+    job["updated_at"] = datetime.now(timezone.utc).isoformat()
+
+
+def get_document_index_job(job_id: str) -> Optional[Dict[str, Any]]:
+    """Fetch the current status for a specific indexing job."""
+    job = document_index_jobs.get(job_id)
+    return dict(job) if job else None
+
+
+def list_document_index_jobs(
+    collection_id: Optional[str] = None,
+    limit: Optional[int] = 50,
+) -> List[Dict[str, Any]]:
+    """List indexing jobs, optionally filtered by collection."""
+    jobs_iterable = list(document_index_jobs.values())
+    if collection_id:
+        jobs_iterable = [job for job in jobs_iterable if job.get("collection_id") == collection_id]
+
+    sorted_jobs = sorted(
+        (dict(job) for job in jobs_iterable),
+        key=lambda job: job.get("updated_at") or job.get("created_at") or "",
+        reverse=True,
+    )
+
+    if limit is not None and limit >= 0:
+        return sorted_jobs[:limit]
+    return sorted_jobs
 
 async def extract_texts_by_collection(
     db: AsyncSession,
@@ -251,13 +367,16 @@ async def _check_column_exists(db: AsyncSession, table_name: str, column_name: s
     """
     try:
         # Execute raw SQL to check if the column exists
-        query = """
-        SELECT EXISTS (
-            SELECT 1
-            FROM information_schema.columns
-            WHERE table_name = :table_name AND column_name = :column_name
-        );
-        """
+        from sqlalchemy import text
+        query = text(
+            """
+            SELECT EXISTS (
+                SELECT 1
+                FROM information_schema.columns
+                WHERE table_name = :table_name AND column_name = :column_name
+            );
+            """
+        )
         result = await db.execute(query, {"table_name": table_name, "column_name": column_name})
         exists = result.scalar()
         return exists
@@ -276,8 +395,8 @@ if os.getenv("USE_UVLOOP", "false").lower() != "true":
         logging.getLogger(__name__).warning(f"Could not apply nest_asyncio: {e}")
         logging.getLogger(__name__).warning("This is normal if using uvloop. Set USE_UVLOOP=false to use nest_asyncio.")
 
-from llama_index.core import Document, SimpleDirectoryReader
-from llama_index.embeddings.openai import OpenAIEmbedding
+from llama_index.core import Document
+from llama_index.embeddings.huggingface import HuggingFaceEmbedding
 from llama_index.core.node_parser import SentenceSplitter, MarkdownElementNodeParser
 from llama_index.core.extractors import TitleExtractor
 from llama_index.core.ingestion import IngestionPipeline, IngestionCache
@@ -429,9 +548,10 @@ async def setup_vector_store(collection_name: str):
         pipeline = IngestionPipeline(
             transformations=[
                 SentenceSplitter(chunk_size=1024, chunk_overlap=50),
-                OpenAIEmbedding(
-                    model="text-embedding-3-small",
-                    chunk_size=64,
+                HuggingFaceEmbedding(
+                    model_name="BAAI/bge-small-en-v1.5",
+                    device="cpu",
+                    embed_batch_size=64,
                 ),
             ],
             vector_store=vector_store,
@@ -493,12 +613,12 @@ async def index_documents_by_collection(collection_id: str) -> Dict[str, Any]:
                 doc_objects = [
                     Document(
                         text=doc.get("content", ""),
-                        metadata={
+                        metadata=sanitize_metadata_for_chromadb({
                             "title": doc.get("title", ""),
                             "url": doc.get("url", ""),
                             "doc_id": doc.get("id", ""),
                             "last_crawled": doc.get("last_crawled", "")
-                        }
+                        })
                     ) for doc in batch_docs
                 ]
                 
@@ -605,27 +725,23 @@ async def should_crawl_collection(collection_id: str) -> bool:
         # Default to allowing crawl if we can't check
         return True
 
-def start_background_indexing(collection_id: str) -> None:
+async def start_background_indexing(collection_id: str) -> None:
     """
     Start background indexing for a collection.
     
-    This function runs the indexing process in a background task.
-    It should be called after a crawl is completed.
+    This is now an async function that should be called with BackgroundTasks.add_task()
+    or awaited directly. It runs the indexing process for crawled webpages.
+    Should be called after a crawl is completed.
     
     Args:
         collection_id: The collection ID to process
     """
-    async def _run_indexing():
-        try:
-            logger.info(f"Starting background indexing for collection '{collection_id}'")
-            result = await index_documents_by_collection(collection_id)
-            logger.info(f"Background indexing completed for collection '{collection_id}': {result['status']}")
-        except Exception as e:
-            logger.error(f"Error in background indexing for collection '{collection_id}': {e}")
-    
-    # Create and start the task
-    asyncio.create_task(_run_indexing())
-    logger.info(f"Scheduled background indexing task for collection '{collection_id}'")
+    try:
+        logger.info(f"Starting background indexing for collection '{collection_id}'")
+        result = await index_documents_by_collection(collection_id)
+        logger.info(f"Background indexing completed for collection '{collection_id}': {result['status']}")
+    except Exception as e:
+        logger.error(f"Error in background indexing for collection '{collection_id}': {e}")
 
 async def get_unindexed_uploaded_documents(
     db: AsyncSession,
@@ -756,53 +872,64 @@ async def download_and_process_documents(
             logger.warning("No documents were successfully downloaded")
             return []
         
-        # Process documents using SimpleDirectoryReader
-        try:
-            # Extract just the file paths
-            file_paths = [item["path"] for item in downloaded_files]
+        processed_documents: List[Document] = []
+
+        for entry in downloaded_files:
+            doc_path = entry["path"]
+            original_doc_data = entry["doc_data"]
+
+            try:
+                text_content, parser_metadata = parse_document_file(doc_path)
+            except DocumentParseError as parse_error:
+                logger.error(
+                    "Failed to parse document '%s': %s",
+                    original_doc_data.get("filename"),
+                    parse_error,
+                )
+                continue
+            except Exception as unexpected_error:  # pragma: no cover - defensive branch
+                logger.exception(
+                    "Unexpected error parsing document '%s'",
+                    original_doc_data.get("filename"),
+                )
+                continue
+
+            metadata: Dict[str, Any] = {
+                "doc_id": original_doc_data["id"],
+                "filename": original_doc_data["filename"],
+                "content_type": original_doc_data["content_type"],
+                "upload_date": original_doc_data["upload_date"],
+                "description": original_doc_data["description"],
+                "collection_id": original_doc_data["collection_id"],
+                "source_type": "uploaded_document",
+            }
+
+            if original_doc_data.get("metadata"):
+                metadata.update(original_doc_data["metadata"])
+            if parser_metadata:
+                metadata["parser_metadata"] = parser_metadata
             
-            # Use SimpleDirectoryReader with specific file paths
-            reader = SimpleDirectoryReader(
-                input_files=file_paths,
-                required_exts=[".pdf", ".docx", ".txt", ".md"]  # Supported formats
-            )
-            
-            # Load documents
-            documents_loaded = reader.load_data()
-            
-            # Enhance documents with metadata
-            for i, doc in enumerate(documents_loaded):
-                if i < len(downloaded_files):
-                    original_doc_data = downloaded_files[i]["doc_data"]
-                    
-                    # Add custom metadata
-                    doc.metadata.update({
-                        "doc_id": original_doc_data["id"],
-                        "filename": original_doc_data["filename"],
-                        "content_type": original_doc_data["content_type"],
-                        "upload_date": original_doc_data["upload_date"],
-                        "description": original_doc_data["description"],
-                        "collection_id": original_doc_data["collection_id"],
-                        "source_type": "uploaded_document"
-                    })
-                    
-                    # Add original metadata if it exists
-                    if original_doc_data.get("metadata"):
-                        doc.metadata.update(original_doc_data["metadata"])
-            
-            logger.info(f"Successfully processed {len(documents_loaded)} documents using SimpleDirectoryReader")
-            return documents_loaded
-            
-        except Exception as e:
-            logger.error(f"Error processing documents with SimpleDirectoryReader: {e}")
+            # Sanitize metadata to ensure ChromaDB compatibility
+            sanitized_metadata = sanitize_metadata_for_chromadb(metadata)
+
+            processed_documents.append(Document(text=text_content, metadata=sanitized_metadata))
+
+        if not processed_documents:
+            logger.warning("All downloaded documents failed to parse; skipping indexing batch")
             return []
+
+        logger.info("Successfully processed %s documents for indexing", len(processed_documents))
+        return processed_documents
             
     except Exception as e:
         logger.error(f"Error in download_and_process_documents: {e}")
         return []
 
 
-async def index_uploaded_documents_by_collection(collection_id: str) -> Dict[str, Any]:
+async def index_uploaded_documents_by_collection(
+    collection_id: str,
+    job_id: Optional[str] = None
+) -> Dict[str, Any]:
     """
     Index uploaded documents for a specific collection using SimpleDirectoryReader.
     
@@ -821,6 +948,14 @@ async def index_uploaded_documents_by_collection(collection_id: str) -> Dict[str
         "documents_indexed": 0,
         "source_type": "uploaded_documents"
     }
+
+    if job_id:
+        update_document_index_job(
+            job_id,
+            status="running",
+            started_at=start_time.isoformat(),
+            message="Preparing to index uploaded documents"
+        )
     
     try:
         # Get database session
@@ -829,6 +964,13 @@ async def index_uploaded_documents_by_collection(collection_id: str) -> Dict[str
             # Get unindexed documents
             documents = await get_unindexed_uploaded_documents(db, collection_id)
             
+            total_documents = len(documents)
+            if job_id:
+                update_document_index_job(
+                    job_id,
+                    documents_total=total_documents
+                )
+
             if not documents:
                 logger.info(f"No unindexed uploaded documents found for collection '{collection_id}'")
                 stats.update({
@@ -836,9 +978,17 @@ async def index_uploaded_documents_by_collection(collection_id: str) -> Dict[str
                     "end_time": datetime.now(timezone.utc).isoformat(),
                     "message": "No documents to index"
                 })
+                if job_id:
+                    update_document_index_job(
+                        job_id,
+                        status="completed",
+                        completed_at=stats["end_time"],
+                        progress_percent=100.0,
+                        message=stats["message"],
+                    )
                 return stats
             
-            logger.info(f"Found {len(documents)} uploaded documents to index for collection '{collection_id}'")
+            logger.info(f"Found {total_documents} uploaded documents to index for collection '{collection_id}'")
             
             # Set up vector store
             vector_store, pipeline = await setup_vector_store(collection_id)
@@ -847,7 +997,7 @@ async def index_uploaded_documents_by_collection(collection_id: str) -> Dict[str
             batch_size = 10  # Smaller batch size for file processing
             total_indexed = 0
             
-            for i in range(0, len(documents), batch_size):
+            for i in range(0, total_documents, batch_size):
                 batch_docs = documents[i:i+batch_size]
                 logger.info(f"Processing batch {i//batch_size + 1}/{(len(documents)-1)//batch_size + 1} " +
                            f"({len(batch_docs)} documents)")
@@ -876,14 +1026,31 @@ async def index_uploaded_documents_by_collection(collection_id: str) -> Dict[str
                         total_indexed += len(document_ids)
                         
                         logger.info(f"Successfully indexed batch of {len(document_ids)} uploaded documents")
+
+                        if job_id:
+                            processed_count = min(i + len(batch_docs), total_documents)
+                            progress = round((processed_count / total_documents) * 100, 1) if total_documents else 100.0
+                            update_document_index_job(
+                                job_id,
+                                documents_processed=processed_count,
+                                documents_indexed=total_indexed,
+                                progress_percent=progress,
+                                message=f"Indexed {total_indexed}/{total_documents} documents"
+                            )
                         
                     except Exception as e:
                         logger.error(f"Error processing batch: {e}")
                         # Continue with next batch instead of failing completely
+                        if job_id:
+                            update_document_index_job(
+                                job_id,
+                                message=f"Batch failed: {e}",
+                                error=str(e)
+                            )
                         continue
             
             # Update stats
-            stats["documents_processed"] = len(documents)
+            stats["documents_processed"] = total_documents
             stats["documents_indexed"] = total_indexed
             
             end_time = datetime.now(timezone.utc)
@@ -892,8 +1059,20 @@ async def index_uploaded_documents_by_collection(collection_id: str) -> Dict[str
                 "end_time": end_time.isoformat(),
                 "processing_time_seconds": (end_time - start_time).total_seconds()
             })
+
+            if job_id:
+                update_document_index_job(
+                    job_id,
+                    status="completed",
+                    completed_at=end_time.isoformat(),
+                    documents_indexed=total_indexed,
+                    documents_processed=total_documents,
+                    progress_percent=100.0,
+                    message="Indexing completed successfully",
+                    error=None
+                )
             
-            logger.info(f"Successfully indexed {total_indexed}/{len(documents)} uploaded documents in collection '{collection_id}'")
+            logger.info(f"Successfully indexed {total_indexed}/{total_documents} uploaded documents in collection '{collection_id}'")
             return stats
     
     except Exception as e:
@@ -903,6 +1082,14 @@ async def index_uploaded_documents_by_collection(collection_id: str) -> Dict[str
             "error": str(e),
             "end_time": datetime.now(timezone.utc).isoformat()
         })
+        if job_id:
+            update_document_index_job(
+                job_id,
+                status="failed",
+                completed_at=stats["end_time"],
+                error=str(e),
+                message=f"Indexing failed: {e}"
+            )
         return stats
 
 
@@ -937,27 +1124,65 @@ async def has_unindexed_uploaded_documents(
         logger.error(f"Error checking for unindexed uploaded documents: {e}")
         return False, 0
 
+async def start_background_document_indexing(collection_id: str, job_id: Optional[str] = None) -> str:
+    """Schedule indexing of uploaded documents for a collection.
 
-def start_background_document_indexing(collection_id: str) -> None:
-    """
-    Start indexing uploaded documents for a collection in the background.
+    Returns the job identifier used for status tracking.
     
-    Args:
-        collection_id: The collection ID to process
+    Note: This is now an async function that should be called with BackgroundTasks.add_task()
+    or awaited directly in an async context.
     """
-    async def _run_document_indexing():
-        try:
-            logger.info(f"Starting background document indexing for collection '{collection_id}'")
-            result = await index_uploaded_documents_by_collection(collection_id)
-            logger.info(f"Background document indexing completed for collection '{collection_id}': {result['status']}")
-        except Exception as e:
-            logger.error(f"Error in background document indexing for collection '{collection_id}': {e}")
-    
-    # Run the async function in a new event loop
+    job_id = job_id or register_document_index_job(collection_id)
+
     try:
-        asyncio.run(_run_document_indexing())
+        logger.info(
+            f"Starting background document indexing for collection '{collection_id}' (job {job_id})"
+        )
+        result = await index_uploaded_documents_by_collection(collection_id, job_id=job_id)
+        logger.info(
+            f"Background document indexing completed for collection '{collection_id}' (job {job_id}): {result['status']}"
+        )
+
+        if result.get("status") == "completed":
+            try:
+                from app.core.rag.tool_loader import refresh_collections
+
+                refresh_collections(collection_id)
+                update_document_index_job(
+                    job_id,
+                    message="Indexing completed and cache refreshed"
+                )
+            except Exception as refresh_error:
+                logger.warning(
+                    "Cache refresh after indexing failed for collection '%s': %s",
+                    collection_id,
+                    refresh_error,
+                )
+                update_document_index_job(
+                    job_id,
+                    message="Indexing completed, but cache refresh failed",
+                    error=str(refresh_error),
+                )
+
     except Exception as e:
-        logger.error(f"Error starting document indexing task: {e}")
-    
-    logger.info(f"Completed background document indexing task for collection '{collection_id}'")
+        logger.error(
+            "Error in background document indexing for collection '%s' (job %s): %s",
+            collection_id,
+            job_id,
+            e,
+        )
+        update_document_index_job(
+            job_id,
+            status="failed",
+            completed_at=datetime.now(timezone.utc).isoformat(),
+            error=str(e),
+            message=f"Indexing failed: {e}",
+        )
+
+    logger.info(
+        "Completed background document indexing task for collection '%s' (job %s)",
+        collection_id,
+        job_id,
+    )
+    return job_id
 

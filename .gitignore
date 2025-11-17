@@ -32,6 +32,7 @@ MANIFEST
 !.env.example
 data_backups/
 
+test_data/
 
 
 
@@ -196,3 +197,5 @@ data/backups-dev
 
 backups
 tests/integration/test_data/test_immigration_faq.txt
+backups/
+data_backups/

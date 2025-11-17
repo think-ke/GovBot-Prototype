@@ -6,6 +6,7 @@ from datetime import datetime, timezone, timedelta
 from typing import Dict, List, Optional, Any, Union
 from sqlalchemy import select, update, and_, delete
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.exc import IntegrityError
 from uuid import uuid4
 import uuid
 from pydantic_core import to_jsonable_python
@@ -70,12 +71,31 @@ class ChatPersistenceService:
             updated_at=datetime.now(timezone.utc)
         )
         
-        db.add(chat)
-        await db.commit()
-        await db.refresh(chat)
-        
-        logger.info(f"Created new chat session with provided ID: {session_id}")
-        return session_id
+        try:
+            db.add(chat)
+            await db.commit()
+            await db.refresh(chat)
+            logger.info(f"Created new chat session with provided ID: {session_id}")
+            return session_id
+        except IntegrityError:
+            # Another request created the same session concurrently
+            await db.rollback()
+            existing_chat = await ChatPersistenceService.get_chat_by_session_id(db, session_id)
+            if existing_chat is None:
+                # The error was not caused by a duplicate session; re-raise for visibility
+                raise
+
+            # Optionally link the user_id if it was missing previously
+            if user_id and not existing_chat.user_id:
+                setattr(existing_chat, "user_id", user_id)
+                setattr(existing_chat, "updated_at", datetime.now(timezone.utc))
+                await db.commit()
+
+            logger.info(
+                "Session %s already exists; returning existing session instead of creating a new one",
+                session_id,
+            )
+            return existing_chat.session_id
 
     @staticmethod
     async def get_chat_by_session_id(db: AsyncSession, session_id: str) -> Optional[Chat]:
@@ -243,7 +263,7 @@ class ChatPersistenceService:
             session_id: The session ID to look up
             
         Returns:
-            Dictionary with 'chat' and 'messages' if found, None otherwise
+            Dictionary with chat data and messages as dicts if found, None otherwise
         """
         try:
             # First get the chat
@@ -260,9 +280,23 @@ class ChatPersistenceService:
             messages_result = await db.execute(messages_query)
             messages = messages_result.scalars().all()
             
+            # Convert SQLAlchemy models to dictionaries
+            message_dicts = []
+            for msg in messages:
+                message_dicts.append({
+                    "message_id": msg.message_id,
+                    "message_type": msg.message_type,
+                    "content": msg.message_object,  # message_object contains the message content
+                    "timestamp": msg.timestamp,
+                    "metadata": msg.history  # history contains metadata for assistant messages
+                })
+            
             return {
-                "chat": chat,
-                "messages": messages
+                "session_id": chat.session_id,
+                "user_id": chat.user_id,
+                "created_at": chat.created_at,
+                "updated_at": chat.updated_at,
+                "messages": message_dicts
             }
             
         except Exception as e:

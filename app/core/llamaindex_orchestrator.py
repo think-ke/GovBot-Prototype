@@ -15,7 +15,7 @@ from llama_index.core.tools import FunctionTool
 from llama_index.core.base.llms.types import ChatMessage
 from llama_index.llms.openai import OpenAI
 from llama_index.llms.groq import Groq
-from llama_index.embeddings.openai import OpenAIEmbedding
+from llama_index.embeddings.huggingface import HuggingFaceEmbedding
 from pydantic import BaseModel, Field
 
 from app.utils.prompts import SYSTEM_PROMPT
@@ -31,8 +31,10 @@ logger = logging.getLogger(__name__)
 load_dotenv()
 
 # Configure Settings
-Settings.embed_model = OpenAIEmbedding(
-    model="text-embedding-3-small", embed_batch_size=100
+Settings.embed_model = HuggingFaceEmbedding(
+    model_name="BAAI/bge-small-en-v1.5",
+    device="cpu",
+    embed_batch_size=100
 )
 
 # Context for event tracking (optional; set by run_llamaindex_agent when db/session is provided)
@@ -340,7 +342,14 @@ def create_llamaindex_tools(agencies: Optional[Union[str, List[str]]] = None) ->
         handle = canonical_to_alias.get(canonical) or _slugify(display)
         tool_name = f"query_{handle}"
         async_fn = _make_query_fn(handle if handle in get_index_dict() else canonical, display)
-        desc = f"Query the {display} collection for information relevant to its domain."
+        
+        # Use collection description from database if available, otherwise use generic description
+        collection_desc = info.get("collection_description", "")
+        if collection_desc and collection_desc.strip():
+            desc = f"Query the {display} collection. Here's what you need to know about it: {collection_desc}"
+        else:
+            desc = f"Query the {display} collection for information relevant to its domain."
+        
         dynamic_tools[handle] = FunctionTool.from_defaults(async_fn=async_fn, name=tool_name, description=desc)
 
     # Maintain legacy aliases explicitly if they exist in index dict (ensures backwards compat)
@@ -412,16 +421,60 @@ def create_llamaindex_tools(agencies: Optional[Union[str, List[str]]] = None) ->
     return selected
 
 
+def _resolve_to_collection_name(agency_id: str) -> str:
+    """
+    Resolve an agency identifier (UUID, alias, or name) to a human-readable collection name.
+    
+    Args:
+        agency_id: Agency identifier (UUID, alias like 'kfc', or collection name)
+        
+    Returns:
+        Human-readable collection name, or the original identifier if not found
+    """
+    meta = collection_dict or {}
+    alias_map = get_alias_map()
+    
+    # Try as alias first
+    canonical = alias_map.get(agency_id.lower())
+    if canonical and str(canonical) in meta:
+        return meta[str(canonical)].get("collection_name") or meta[str(canonical)].get("name") or agency_id
+    
+    # Try as canonical UUID
+    if agency_id in meta:
+        return meta[agency_id].get("collection_name") or meta[agency_id].get("name") or agency_id
+    
+    # Try case-insensitive name lookup
+    for cid, info in meta.items():
+        name = info.get("collection_name") or info.get("name") or ""
+        if name.lower() == agency_id.lower():
+            return name
+    
+    # Fallback to original identifier
+    return agency_id
+
+
 def _derive_bot_name(agencies: Optional[Union[str, List[str]]]) -> str:
-    """Return a custom bot name based on the agency filter."""
+    """Return a custom bot name based on the agency filter, using human-readable collection names."""
     base = "GovBot"
     if agencies is None:
+        logger.info(f"Creating general {base} (no agency filter)")
         return base
     if isinstance(agencies, str):
-        return f"{base}-{agencies.upper()}"
+        collection_name = _resolve_to_collection_name(agencies)
+        # Use first word or abbreviation for cleaner bot name
+        name_part = collection_name.split()[0] if collection_name else agencies
+        bot_name = f"{base}-{name_part}"
+        logger.info(f"Creating agency bot: {bot_name} for collection '{collection_name}'")
+        return bot_name
     if isinstance(agencies, list) and agencies:
-        suffix = "-".join(a.upper() for a in agencies)
-        return f"{base}-{suffix}"
+        collection_names = [_resolve_to_collection_name(a) for a in agencies]
+        # Use first word of each collection for cleaner bot name
+        name_parts = [name.split()[0] if name else a for name, a in zip(collection_names, agencies)]
+        suffix = "-".join(name_parts)
+        bot_name = f"{base}-{suffix}"
+        logger.info(f"Creating multi-agency bot: {bot_name} for collections: {', '.join(collection_names)}")
+        return bot_name
+    logger.info(f"Creating general {base} (fallback)")
     return base
 
 
@@ -441,16 +494,21 @@ def build_system_prompt(agencies: Optional[Union[str, List[str]]] = None) -> str
     # Add agency focus and strict guardrails. Keep the collections placeholder intact.
     if agencies:
         if isinstance(agencies, str):
-            agency_key = agencies.upper()
+            # Resolve to human-readable collection name
+            collection_name = _resolve_to_collection_name(agencies)
+            logger.info(f"Building system prompt for {bot_name} with agency focus: {collection_name}")
             agency_note = (
-                f"\n\nAgency focus: This assistant is specialized for the {agency_key} collection and related services."
+                f"\n\nAgency focus: This assistant is specialized for the {collection_name} collection and related services."
                 f"\n\nSTRICT AGENCY GUARDRAILS\n"
-                f"- Only answer questions that are clearly within the scope of {agency_key} and its official mandate.\n"
-                f"- If a question is outside {agency_key}'s scope (or ambiguous), DO NOT answer it. Respond instead with: \"I'm {bot_name}, and I'm specialized in {agency_key}. I can't help with unrelated topics. Please ask about {agency_key}-related services or policies.\"\n"
-                f"- Prioritize information from the {agency_key} collection(s). Do not reference other agencies unless explicitly asked to compare with {agency_key}.\n"
+                f"- Only answer questions that are clearly within the scope of {collection_name} and its official mandate.\n"
+                f"- If a question is outside {collection_name}'s scope (or ambiguous), DO NOT answer it. Respond instead with: \"I'm {bot_name}, and I'm specialized in {collection_name}. I can't help with unrelated topics. Please ask about {collection_name}-related services or policies.\"\n"
+                f"- Prioritize information from the {collection_name} collection(s). Do not reference other agencies unless explicitly asked to compare with {collection_name}.\n"
             )
         else:
-            joined = ", ".join(a.upper() for a in agencies)
+            # Resolve all to human-readable collection names
+            collection_names = [_resolve_to_collection_name(a) for a in agencies]
+            joined = ", ".join(collection_names)
+            logger.info(f"Building system prompt for {bot_name} with multi-agency focus: {joined}")
             agency_note = (
                 f"\n\nAgency focus: This assistant is specialized for the following collections: {joined}."
                 f"\n\nSTRICT AGENCY GUARDRAILS\n"
@@ -459,6 +517,8 @@ def build_system_prompt(agencies: Optional[Union[str, List[str]]] = None) -> str
                 f"- Prioritize information from the specified collections only. Do not reference other agencies unless explicitly asked to compare with the specified ones.\n"
             )
         prompt = prompt + agency_note
+    else:
+        logger.info(f"Building system prompt for general {bot_name} (no agency restrictions)")
     return prompt
 
 
@@ -475,16 +535,40 @@ def generate_llamaindex_agent(agencies: Optional[Union[str, List[str]]] = None) 
     Returns:
         Initialized FunctionAgent
     """
+    logger.info("=" * 80)
     logger.info("Starting LlamaIndex FunctionAgent creation process")
+    
+    # Log agency filter information
+    if agencies is None:
+        logger.info("Agency filter: None (general GovBot with all tools)")
+    elif isinstance(agencies, str):
+        collection_name = _resolve_to_collection_name(agencies)
+        logger.info(f"Agency filter: Single agency - '{agencies}' -> '{collection_name}'")
+    elif isinstance(agencies, list):
+        collection_names = [_resolve_to_collection_name(a) for a in agencies]
+        logger.info(f"Agency filter: Multiple agencies - {agencies}")
+        logger.info(f"Resolved to collections: {collection_names}")
     
     # Create tools with optional filtering
     tools = create_llamaindex_tools(agencies)
+    logger.info(f"Created {len(tools)} tool(s): {[tool.metadata.name for tool in tools]}")
     
     # Build and format the system prompt with agency-specific name/context
     base_prompt = build_system_prompt(agencies)
-    formatted_system_prompt = base_prompt.format(
-        collections=yaml.dump(collection_dict) if collection_dict else "No collections available"
-    )
+    
+    # Format collections in a readable way (collection name as key instead of ID)
+    if collection_dict:
+        readable_collections = {}
+        for cid, info in collection_dict.items():
+            collection_name = info.get("collection_name", cid)
+            readable_collections[collection_name] = {
+                "description": info.get("collection_description", "")
+            }
+        collections_text = yaml.dump(readable_collections, default_flow_style=False)
+    else:
+        collections_text = "No collections available"
+    
+    formatted_system_prompt = base_prompt.format(collections=collections_text)
     
     # Create the FunctionAgent
     agent = FunctionAgent(
@@ -494,7 +578,8 @@ def generate_llamaindex_agent(agencies: Optional[Union[str, List[str]]] = None) 
         verbose=True
     )
     
-    logger.info(f"LlamaIndex FunctionAgent created with {len(tools)} tools available for agencies: {agencies}")
+    logger.info(f"✓ LlamaIndex FunctionAgent created successfully for agencies: {agencies}")
+    logger.info("=" * 80)
     return agent
 
 

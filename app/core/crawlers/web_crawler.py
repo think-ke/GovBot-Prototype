@@ -38,6 +38,7 @@ from sqlalchemy.ext.asyncio import create_async_engine
 
 from app.db.models.webpage import Webpage, WebpageLink
 from llama_index.core.tools import FunctionTool
+from starlette.concurrency import run_in_threadpool
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -76,7 +77,7 @@ DEFAULT_SETTINGS = {
     "verify_ssl": False,               # Whether to verify SSL certificates
     "max_content_length": 5 * 1024 * 1024,  # Maximum content length in bytes (5MB)
     "file_extensions_to_skip": [      # File extensions to skip
-        ".pdf", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx",
+        ".pdf", ".docx", ".xls", ".xlsx", ".ppt", ".pptx",
         ".zip", ".rar", ".7z", ".tar", ".gz", ".jpg", ".jpeg", 
         ".png", ".gif", ".bmp", ".svg", ".mp3", ".mp4", ".avi", 
         ".mov", ".wmv", ".flv", ".exe", ".dll", ".so", ".jar"
@@ -388,9 +389,7 @@ class WebCrawler:
                     logger.info(f"Created new webpage record with ID: {webpage.id} for URL: {url}")
                 except Exception as e:
                     logger.error(f"Database error when committing webpage {url}: {str(e)}")
-                    raise
-            else:
-                logger.info(f"Found existing webpage record with ID: {webpage.id} for URL: {url}")
+                    await session.rollback()
             
             return webpage
         except Exception as e:
@@ -459,13 +458,15 @@ class WebCrawler:
         """
         links = extract_links(soup, base_url)
         links_processed = 0
+        base_domain = get_domain(base_url)
         
         for link in links:
             url = link['url']
             target_domain = get_domain(url)
             
             # Skip external links if configured to do so
-            if not self.settings['follow_external_links'] and target_domain != get_domain(base_url):
+            if not self.settings['follow_external_links'] and target_domain != base_domain:
+                logger.debug(f"Skipping external link in _process_links: {url} (target domain: {target_domain}, base domain: {base_domain})")
                 continue
             
             # Skip file URLs
@@ -505,9 +506,10 @@ class WebCrawler:
                     'Accept': 'text/html,application/xhtml+xml,application/xml',
                     'Accept-Language': 'en-US,en;q=0.9',
                 }
-                
-                # Use the passed requests_session object
-                response = requests_session.get(
+
+                # Offload blocking HTTP call to avoid starving the event loop
+                response = await run_in_threadpool(
+                    requests_session.get,
                     url,
                     headers=headers,
                     timeout=self.settings['timeout'],
@@ -589,7 +591,7 @@ class WebCrawler:
         # Verify domain can be resolved before attempting to crawl
         try:
             import socket
-            ip = socket.gethostbyname(domain)
+            ip = await run_in_threadpool(socket.gethostbyname, domain)
             logger.info(f"DNS resolution successful: {domain} -> {ip}")
         except socket.gaierror as e:
             err_msg = f"DNS resolution failed for domain: {domain} - {e}"
@@ -600,7 +602,7 @@ class WebCrawler:
                 import dns.resolver
                 resolver = dns.resolver.Resolver()
                 resolver.nameservers = ['8.8.8.8', '8.8.4.4']  # Google's public DNS
-                answer = resolver.resolve(domain, 'A')
+                answer = await run_in_threadpool(resolver.resolve, domain, 'A')
                 ip = answer[0].to_text()
                 logger.info(f"Fallback DNS resolution successful: {domain} -> {ip}")
                 # Continue with the crawl since we resolved the domain
@@ -637,7 +639,7 @@ class WebCrawler:
         try:
             from requests.adapters import HTTPAdapter
             from urllib3.util.retry import Retry  # Corrected import
-            
+
             custom_session = requests.Session()
             retry_strategy = Retry(
                 total=self.settings['max_retries'],
@@ -647,11 +649,12 @@ class WebCrawler:
             adapter = HTTPAdapter(max_retries=retry_strategy)
             custom_session.mount("http://", adapter)
             custom_session.mount("https://", adapter)
-            
-            # Test connection before proceeding
-            test_response = custom_session.head(
-                url, 
-                timeout=self.settings['timeout']/2,
+
+            # Test connection before proceeding (offload blocking call)
+            test_response = await run_in_threadpool(
+                custom_session.head,
+                url,
+                timeout=self.settings['timeout'] / 2,
                 verify=self.settings['verify_ssl'],
                 allow_redirects=self.settings['follow_redirects']
             )
@@ -756,6 +759,11 @@ class WebCrawler:
             "end_time": self.end_time.isoformat(),
             "pages_per_second": self.urls_crawled / duration if duration > 0 else 0,
         }
+        if self.errors:
+            stats["error_details"] = [
+                {"url": url, "error": error_msg}
+                for url, error_msg in self.errors
+            ]
         
         logger.info(f"Crawl completed: {stats}")
         return stats
@@ -801,19 +809,35 @@ class WebCrawler:
                 # If successful, get outgoing links
                 if result:
                     async with self.session_maker() as session:
+                        # Get the source webpage to determine its domain
+                        query = select(Webpage).where(Webpage.id == result)
+                        source_result = await session.execute(query)
+                        source_webpage = source_result.scalars().first()
+                        source_domain = get_domain(source_webpage.url) if source_webpage else None
+                        
                         # Get links from this page to other pages
                         query = select(WebpageLink).where(WebpageLink.source_id == result)
-                        result = await session.execute(query)
-                        links = result.scalars().all()
+                        links_result = await session.execute(query)
+                        links = links_result.scalars().all()
                         
                         # For each link, get the target webpage
                         for link in links:
                             query = select(Webpage).where(Webpage.id == link.target_id)
-                            result = await session.execute(query)
-                            target_webpage = result.scalars().first()
+                            target_result = await session.execute(query)
+                            target_webpage = target_result.scalars().first()
+                            
+                            if not target_webpage:
+                                continue
+                            
+                            # Skip external links if configured to do so
+                            if not self.settings['follow_external_links'] and source_domain:
+                                target_domain = get_domain(target_webpage.url)
+                                if target_domain != source_domain:
+                                    logger.debug(f"Skipping external link: {target_webpage.url} (target domain: {target_domain}, source domain: {source_domain})")
+                                    continue
                             
                             # If within depth limit and not visited, add to queue
-                            if (target_webpage and target_webpage.url not in self.visited_urls and
+                            if (target_webpage.url not in self.visited_urls and
                                 target_webpage.crawl_depth <= self.settings['max_depth']):
                                 await queue.put((target_webpage.url, target_webpage.crawl_depth, False))
                                 self.urls_queued += 1
@@ -847,19 +871,35 @@ class WebCrawler:
             # If successful, get outgoing links
             if result:
                 async with self.session_maker() as session:
+                    # Get the source webpage to determine its domain
+                    query = select(Webpage).where(Webpage.id == result)
+                    source_result = await session.execute(query)
+                    source_webpage = source_result.scalars().first()
+                    source_domain = get_domain(source_webpage.url) if source_webpage else None
+                    
                     # Get links from this page to other pages
                     query = select(WebpageLink).where(WebpageLink.source_id == result)
-                    result = await session.execute(query)
-                    links = result.scalars().all()
+                    links_result = await session.execute(query)
+                    links = links_result.scalars().all()
                     
                     # For each link, get the target webpage
                     for link in links:
                         query = select(Webpage).where(Webpage.id == link.target_id)
-                        result = await session.execute(query)
-                        target_webpage = result.scalars().first()
+                        target_result = await session.execute(query)
+                        target_webpage = target_result.scalars().first()
+                        
+                        if not target_webpage:
+                            continue
+                        
+                        # Skip external links if configured to do so
+                        if not self.settings['follow_external_links'] and source_domain:
+                            target_domain = get_domain(target_webpage.url)
+                            if target_domain != source_domain:
+                                logger.debug(f"Skipping external link: {target_webpage.url} (target domain: {target_domain}, source domain: {source_domain})")
+                                continue
                         
                         # If within depth limit and not visited, add to stack
-                        if (target_webpage and target_webpage.url not in self.visited_urls and
+                        if (target_webpage.url not in self.visited_urls and
                             target_webpage.crawl_depth <= self.settings['max_depth']):
                             stack.append((target_webpage.url, target_webpage.crawl_depth, False))
                             self.urls_queued += 1
@@ -1030,8 +1070,27 @@ async def crawl_website(seed_url: str, depth: int = 3, concurrent_requests: int 
     if session_maker:
         crawler.session_maker = session_maker
     
-    # Start crawl
-    result = await crawler.crawl(seed_url, strategy=strategy)
+    # Start crawl and ensure network failures are captured as handled errors
+    try:
+        result = await crawler.crawl(seed_url, strategy=strategy)
+    except Exception as crawl_error:
+        logger.exception(
+            "Crawl aborted for %s due to recoverable error", seed_url
+        )
+        error_message = str(crawl_error)
+        now_iso = datetime.now(timezone.utc).isoformat()
+        result = {
+            "seed_urls": [seed_url],
+            "urls_crawled": 0,
+            "urls_queued": 1,
+            "errors": 1,
+            "duration_seconds": 0,
+            "start_time": now_iso,
+            "end_time": now_iso,
+            "pages_per_second": 0,
+            "error_message": error_message,
+            "error_details": [{"url": seed_url, "error": error_message}],
+        }
     
     # Update task status if provided
     if task_status and isinstance(task_status, dict):
@@ -1040,6 +1099,8 @@ async def crawl_website(seed_url: str, depth: int = 3, concurrent_requests: int 
             "total_urls_queued": result.get("urls_queued", 0),
             "errors": result.get("errors", 0)
         })
+        if "error_details" in result:
+            task_status["error_details"] = result["error_details"]
     
     return result
 
@@ -1065,7 +1126,7 @@ if __name__ == "__main__":
             import socket
             domain = get_domain(test_url)
             try:
-                ip = socket.gethostbyname(domain)
+                ip = await run_in_threadpool(socket.gethostbyname, domain)
                 print(f"DNS resolution successful: {domain} -> {ip}")
             except socket.gaierror as e:
                 print(f"DNS resolution failed: {e}")

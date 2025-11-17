@@ -6,20 +6,31 @@ All API endpoints (except `/` and `/health`) require authentication via the `X-A
 
 ```http
 X-API-Key: your-api-key-here
+## Transcription API
+
+GovStack exposes Groq Whisper-based speech-to-text functionality via `/transcriptions` endpoints. The service uses the [Groq Speech-to-Text API](https://console.groq.com/docs/speech-to-text) and currently defaults to the `whisper-large-v3-turbo` model for fast multilingual transcription.
+
+### Create Transcription Job
+
+```http
+POST /transcriptions/
+Content-Type: multipart/form-data
+X-API-Key: your-api-key-here
 ```
 
-### Permission Levels
+**Required permission:** `write`
 
-| Permission | Description | Endpoints |
+**Form fields:**
+- `file` *(required)* – audio file upload. Supported types: `flac`, `mp3`, `mp4`, `mpeg`, `mpga`, `m4a`, `ogg`, `wav`, `webm`.
+- `model` *(optional)* – Groq Whisper model ID. Defaults to `whisper-large-v3-turbo`.
+- `metadata` *(optional)* – JSON string saved alongside the transcription record.
+
+### Permission Levels
 |------------|-------------|-----------|
 | `read` | View data and chat history | GET endpoints, chat history |
 | `write` | Create and modify data | POST endpoints, document upload, chat |
 | `delete` | Remove data | DELETE endpoints |
 
-### API Keys
-
-Configure in your environment:
-- `GOVSTACK_API_KEY`: Master key (read, write, delete)
 - `GOVSTACK_ADMIN_API_KEY`: Admin key (read, write)
 
 ## Core Endpoints
@@ -42,13 +53,6 @@ GET /health
 
 ### API Information
 
-Get information about your API key and permissions.
-
-```http
-GET /api-info
-X-API-Key: your-api-key-here
-```
-
 **Response:**
 ```json
 {
@@ -68,9 +72,6 @@ Process a chat message and get an AI response.
 POST /chat/
 Content-Type: application/json
 X-API-Key: your-api-key-here
-```
-
-**Request Body:**
 ```json
 {
   "message": "What services does the government provide for business registration?",
@@ -87,14 +88,6 @@ X-API-Key: your-api-key-here
 
 Chat with a specific agency/collection assistant.
 
-```http
-POST /chat/{agency}
-Content-Type: application/json
-X-API-Key: your-api-key-here
-```
-
-**Path Parameters:**
-- `agency`: Agency identifier - can be:
   - Legacy alias (`kfc`, `kfcb`, `brs`, `odpc`)
   - Collection name (`Kenya Film Commission`)
   - Canonical UUID (`3fa85f64-5717-4562-b3fc-2c963f66afa6`)
@@ -104,12 +97,6 @@ X-API-Key: your-api-key-here
 **Response:** Same as `/chat/` but scoped to specific agency's knowledge base
 
 **Side Effects:**
-- Uses only documents/webpages from the specified collection
-- Tools are dynamically generated from available collections
-- Collection changes auto-refresh available tools
-```
-
-**Required Permission:** `write`
 
 **Response:**
 ```json
@@ -123,10 +110,6 @@ X-API-Key: your-api-key-here
       "snippet": "The Business Registration Service (BRS) is a state corporation..."
     }
   ],
-  "confidence": 0.92,
-  "retriever_type": "brs",
-  "trace_id": "7fa85f64-5717-4562-b3fc-2c963f66afa7",
-  "recommended_follow_up_questions": [
     "What are the fees for business registration?",
     "How long does the business registration process take?"
   ],
@@ -138,8 +121,6 @@ X-API-Key: your-api-key-here
     "details": {
       "accepted_prediction_tokens": 0,
       "audio_tokens": 0,
-      "reasoning_tokens": 0,
-      "rejected_prediction_tokens": 0,
       "cached_tokens": 0
     }
   }
@@ -151,8 +132,6 @@ X-API-Key: your-api-key-here
 Retrieve the conversation history for a session.
 
 ```http
-GET /chat/{session_id}
-X-API-Key: your-api-key-here
 ```
 
 **Response:**
@@ -162,10 +141,6 @@ X-API-Key: your-api-key-here
   "messages": [
     {
       "id": 1,
-      "message_id": "msg1",
-      "message_type": "user",
-      "message_object": {
-        "query": "What services does the government provide?"
       },
       "timestamp": "2023-10-20T14:30:15.123456"
     },
@@ -173,22 +148,16 @@ X-API-Key: your-api-key-here
       "id": 2,
       "message_id": "msg2",
       "message_type": "assistant",
-      "message_object": {
-        "answer": "The government provides various services...",
-        "sources": [...],
-        "confidence": 0.92
       },
       "timestamp": "2023-10-20T14:30:18.654321"
     }
   ],
-  "user_id": "user123",
   "created_at": "2023-10-20T14:30:15.123456",
   "updated_at": "2023-10-20T14:30:18.654321",
   "message_count": 2,
   "num_messages": 2
 }
 ```
-
 ### Delete Chat Session
 
 Remove a chat session and all its messages.
@@ -505,6 +474,16 @@ X-API-Key: your-api-key-here
 
 ## Document Management
 
+> **📚 NEW: Comprehensive Document Metadata API**
+> 
+> For detailed documentation on the new document metadata CRUD operations, see:
+> [**Document Metadata API Documentation**](./DOCUMENT_METADATA_API.md)
+>
+> New endpoints include:
+> - `PATCH /documents/{id}/metadata` - Update metadata without file replacement
+> - `GET /documents/{id}/metadata` - Lightweight metadata retrieval
+> - `POST /documents/bulk-metadata-update` - Bulk metadata operations
+
 ### Upload Document
 
 Upload a document to storage.
@@ -519,7 +498,12 @@ X-API-Key: your-api-key-here
 - `file`: The document file (required)
 - `description`: Optional description text
 - `is_public`: Boolean, default false
-- `collection_id`: Optional collection identifier
+- `collection_id`: Collection identifier used for downstream indexing (required)
+
+**Validation:**
+- Supported extensions: `.csv`, `.docx`, `.md`, `.pdf`, `.txt`, `.xls`, `.xlsx`
+- Requests with unsupported extensions or empty files return `415 Unsupported Media Type` or `400 Bad Request` with a descriptive error message
+- Legacy `.doc` uploads are no longer supported; convert files to `.docx` before uploading
 
 **Response:**
 ```json
@@ -531,21 +515,27 @@ X-API-Key: your-api-key-here
   "size": 1024000,
   "description": "Government policy document",
   "is_public": false,
+  "metadata": {
+    "original_filename": "document.pdf"
+  },
   "collection_id": "policies",
   "is_indexed": false,
   "indexed_at": null,
   "created_by": "user123",
   "updated_by": null,
   "created_at": "2023-10-20T14:30:15.123456",
-  "access_url": "https://minio.example.com/presigned-url"
+  "access_url": "https://minio.example.com/presigned-url",
+  "index_job_id": "2f7a6e2c-9ca4-4d85-9dd7-42e6f4e9e7ad"
 }
 ```
 
 **Side Effects:**
 - File stored in MinIO object storage
 - Sets `is_indexed=false`, triggers background indexing
+- Returns `index_job_id` so clients can poll indexing progress
 - Creates audit log entry
-```
+
+**Tip:** To add custom metadata during upload, use `PATCH /documents/{id}/metadata` immediately after upload.
 
 ### Get Document
 
@@ -564,6 +554,10 @@ X-API-Key: your-api-key-here
   "content_type": "application/pdf",
   "size": 1024000,
   "description": "Government policy document",
+  "metadata": {
+    "department": "Finance",
+    "tags": ["policy", "approved"]
+  },
   "is_indexed": true,
   "indexed_at": "2023-10-20T15:45:30.123456",
   "created_by": "user123",
@@ -621,13 +615,15 @@ X-API-Key: your-api-key-here
   "created_by": "user123",
   "updated_by": "user456",
   "upload_date": "2023-10-20T14:30:15.123456",
-  "access_url": "https://minio.example.com/presigned-url"
+  "access_url": "https://minio.example.com/presigned-url",
+  "index_job_id": "2f7a6e2c-9ca4-4d85-9dd7-42e6f4e9e7ad"
 }
 ```
 
 **Side Effects:**
 - If `file` is provided: uploads new file to MinIO, deletes old file, clears vector embeddings by doc_id, sets `is_indexed=false`, triggers background reindexing
 - If `collection_id` changes: deletes vectors from old collection, sets `is_indexed=false`, triggers reindexing in new collection
+- When a reindex is scheduled, response includes `index_job_id` for progress polling
 
 ### Delete Document
 
@@ -675,6 +671,77 @@ X-API-Key: your-api-key-here
   "indexed": 142,
   "unindexed": 8,
   "progress_percent": 94.7
+}
+```
+
+### List Document Indexing Jobs
+
+List recent background indexing jobs, optionally filtered by collection.
+
+```http
+GET /documents/indexing-jobs?collection_id=policies
+X-API-Key: your-api-key-here
+```
+
+**Query Parameters:**
+- `collection_id`: Optional collection identifier to filter results
+- `limit`: Optional maximum number of jobs to return (default 50, max 500)
+
+**Required Permission:** `read`
+
+**Fields:**
+- `document_ids`: IDs of documents associated with the job when triggered by uploads or replacements
+
+**Response:**
+```json
+[
+  {
+    "job_id": "2f7a6e2c-9ca4-4d85-9dd7-42e6f4e9e7ad",
+    "collection_id": "policies",
+    "status": "running",
+    "documents_total": 25,
+    "documents_processed": 10,
+    "documents_indexed": 10,
+  "document_ids": [101, 102, 103, 104, 105],
+    "progress_percent": 40.0,
+    "message": "Indexed 10/25 documents",
+    "error": null,
+    "created_at": "2025-10-01T09:15:00.123456+00:00",
+    "started_at": "2025-10-01T09:15:01.456789+00:00",
+    "completed_at": null,
+    "updated_at": "2025-10-01T09:16:05.000000+00:00"
+  }
+]
+```
+
+### Get Document Indexing Job
+
+Retrieve the latest status for a specific background indexing job.
+
+```http
+GET /documents/indexing-jobs/{job_id}
+X-API-Key: your-api-key-here
+```
+
+**Required Permission:** `read`
+
+**Response:**
+```json
+{
+  "job_id": "2f7a6e2c-9ca4-4d85-9dd7-42e6f4e9e7ad",
+  "collection_id": "policies",
+  "status": "completed",
+  "documents_total": 25,
+  "documents_processed": 25,
+  "documents_indexed": 25,
+  "document_ids": [101, 102, 103, 104, 105],
+  "progress_percent": 100.0,
+  "message": "Indexing completed and cache refreshed",
+  "error": null,
+  "created_at": "2025-10-01T09:15:00.123456+00:00",
+  "started_at": "2025-10-01T09:15:01.456789+00:00",
+  "completed_at": "2025-10-01T09:17:45.000000+00:00",
+  "updated_at": "2025-10-01T09:17:45.000000+00:00"
 }
 ```
 
@@ -999,8 +1066,69 @@ X-API-Key: your-api-key-here
 
 **Side Effects:**
 - Creates Chroma vector collection
-- Auto-refreshes available chat tools
+- Auto-refreshes available chat tools for the new collection only
 - New collection immediately available for document uploads and chat scoping
+
+### Bulk Create Collections
+
+Create multiple collections in a single request (up to 100 per call).
+
+```http
+POST /collections/bulk
+Content-Type: application/json
+X-API-Key: your-api-key-here
+```
+
+**Request Body:**
+```json
+{
+  "collections": [
+    {
+      "name": "County Business Hub",
+      "description": "Resources for county-level business services",
+      "type": "mixed"
+    },
+    {
+      "name": "Health Facilities",
+      "description": "Hospital and clinic information",
+      "type": "documents"
+    }
+  ]
+}
+```
+
+**Required Permission:** `write`
+
+**Response:**
+```json
+[
+  {
+    "id": "0fc52e84-4dd5-4891-9e93-9879ed9aacd1",
+    "name": "County Business Hub",
+    "description": "Resources for county-level business services",
+    "type": "mixed",
+    "created_at": "2025-10-01T09:15:10.123456+00:00",
+    "updated_at": "2025-10-01T09:15:10.123456+00:00",
+    "document_count": 0,
+    "webpage_count": 0
+  },
+  {
+    "id": "9ff22aa0-8a7e-476f-9dc3-5d35cefb6dd4",
+    "name": "Health Facilities",
+    "description": "Hospital and clinic information",
+    "type": "documents",
+    "created_at": "2025-10-01T09:15:10.123456+00:00",
+    "updated_at": "2025-10-01T09:15:10.123456+00:00",
+    "document_count": 0,
+    "webpage_count": 0
+  }
+]
+```
+
+**Side Effects:**
+- Creates multiple collections in a single transaction
+- Performs targeted cache refreshes only for the newly created collections
+- Suitable for high-volume onboarding flows without reloading every index
 
 ### List Collections
 
@@ -1056,7 +1184,7 @@ X-API-Key: your-api-key-here
 ```
 
 **Side Effects:**
-- Auto-refreshes chat tools with new metadata
+- Auto-refreshes chat tools with new metadata for the updated collection only
 - Updates system prompts for agents
 
 ### Delete Collection
@@ -1071,7 +1199,7 @@ X-API-Key: your-api-key-here
 **Required Permission:** `delete`
 
 **Side Effects:**
-- Removes collection from chat tools
+- Removes collection from chat tools and cache without reloading unaffected collections
 - Orphans documents/webpages (sets collection_id to null)
 - Auto-refreshes available tools
 

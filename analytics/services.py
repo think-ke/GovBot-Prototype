@@ -1527,11 +1527,15 @@ class AnalyticsService:
         q = text(
             """
             WITH coll AS (
-                SELECT id AS collection_id FROM collections
+                SELECT id AS collection_id, name AS collection_name FROM collections
                 UNION
-                SELECT DISTINCT collection_id FROM webpages WHERE collection_id IS NOT NULL
+                SELECT DISTINCT collection_id, NULL AS collection_name FROM webpages WHERE collection_id IS NOT NULL
                 UNION
-                SELECT DISTINCT collection_id FROM documents WHERE collection_id IS NOT NULL
+                SELECT DISTINCT collection_id, NULL AS collection_name FROM documents WHERE collection_id IS NOT NULL
+            ), coll_agg AS (
+                SELECT collection_id, MAX(collection_name) AS collection_name
+                FROM coll
+                GROUP BY collection_id
             ), wp AS (
                 SELECT
                     collection_id,
@@ -1556,7 +1560,8 @@ class AnalyticsService:
                 GROUP BY collection_id
             )
             SELECT
-                coll.collection_id,
+                coll_agg.collection_id,
+                coll_agg.collection_name,
                 COALESCE(wp.pages, 0) AS pages,
                 COALESCE(wp.ok, 0) AS ok,
                 COALESCE(wp.redirects, 0) AS redirects,
@@ -1572,10 +1577,10 @@ class AnalyticsService:
                   WHEN wp.wp_last_indexed IS NOT NULL THEN wp.wp_last_indexed
                   ELSE doc.doc_last_indexed
                 END AS last_indexed_at
-            FROM coll
-            LEFT JOIN wp ON wp.collection_id = coll.collection_id
-            LEFT JOIN doc ON doc.collection_id = coll.collection_id
-            ORDER BY coll.collection_id
+            FROM coll_agg
+            LEFT JOIN wp ON wp.collection_id = coll_agg.collection_id
+            LEFT JOIN doc ON doc.collection_id = coll_agg.collection_id
+            ORDER BY coll_agg.collection_id
             """
         )
         res = await db.execute(q)
@@ -1583,6 +1588,7 @@ class AnalyticsService:
         for r in res.mappings().all():
             items.append({
                 "collection_id": r.get("collection_id"),
+                "collection_name": r.get("collection_name"),
                 "webpages": {
                     "pages": int(r.get("pages") or 0),
                     "ok": int(r.get("ok") or 0),

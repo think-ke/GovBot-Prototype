@@ -93,12 +93,27 @@ app = FastAPI(
 )
 
 # Configure CORS
+# For browsers, "*" cannot be used with allow_credentials=True. Use explicit origins.
+import os
+cors_env = os.getenv("CORS_ALLOW_ORIGINS", "")
+if cors_env.strip():
+    allowed_origins = [o.strip() for o in cors_env.split(",") if o.strip()]
+else:
+    allowed_origins = [
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+        "http://localhost:5173",
+        "http://127.0.0.1:5173",
+        "https://govstack-dashboard.vercel.app",
+    ]
+
+# Allow any origin while supporting credentials by echoing the Origin header (regex)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Configure appropriately for production
+    allow_origin_regex=".*",
     allow_credentials=True,
     allow_methods=["*"],
-    allow_headers=["*"],
+    allow_headers=["*"]
 )
 
 # Include routers

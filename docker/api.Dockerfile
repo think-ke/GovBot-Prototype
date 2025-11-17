@@ -12,17 +12,21 @@ RUN apt-get update && \
 # Upgrade pip and install wheel
 RUN pip install --no-cache-dir --upgrade pip setuptools wheel
 
-# Copy requirements.txt first to leverage Docker cache
-COPY ./requirements.txt /app/requirements.txt
+# Copy requirements-uv-generated.txt first to leverage Docker cache
+COPY ./requirements-uv-generated.txt /app/requirements-uv-generated.txt
 
 # Install Python dependencies
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir -r requirements-uv-generated.txt
 
 # Install gunicorn and uvloop
 RUN pip install --no-cache-dir gunicorn uvloop uvicorn[standard] watchfiles
 
 # Copy the application code and scripts into the container
 COPY ./app /app/app
+
+# Copy Alembic migrations and configuration
+COPY ./alembic /app/alembic
+COPY ./alembic.ini /app/alembic.ini
 
 # Copy any additional scripts or files
 COPY ./scripts /app/scripts
@@ -32,6 +36,7 @@ EXPOSE 5000
 
 # Set environment variable defaults
 ENV USE_UVLOOP=false
+ENV ALEMBIC_CONFIG=/app/alembic.ini
 
 # Command to run the application
 CMD ["uvicorn", "app.api.fast_api_app:app", "--host", "0.0.0.0", "--port", "5000", "--loop", "asyncio", "--http", "httptools"]
