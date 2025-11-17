@@ -30,6 +30,8 @@ MANIFEST
 .env
 .env.*
 !.env.example
+data_backups/
+
 
 
 
@@ -193,3 +195,4 @@ data/backups
 data/backups-dev
 
 backups
+tests/integration/test_data/test_immigration_faq.txt
