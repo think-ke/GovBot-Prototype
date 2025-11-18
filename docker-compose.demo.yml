@@ -14,9 +14,11 @@ services:
       - .env
     networks:
       - govstack-network
-
+  
   admin-dashboard:
-    image: govstack-server-admin-dashboard:latest
+    build:
+      context: ./agencies-admin-dashboard
+      dockerfile: Dockerfile
     ports:
       - "${ADMIN_DASHBOARD_PORT:-3010}:3010"
     environment:
