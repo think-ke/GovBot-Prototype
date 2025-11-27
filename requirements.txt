@@ -222,7 +222,7 @@ pydantic_core==2.33.2
 Pygments==2.19.1
 Pympler==1.1
 pyparsing==3.2.3
-pypdf==5.5.0
+pypdf==6.4.0
 PyPika==0.48.9
 pyproject_hooks==1.2.0
 pysqlite3-binary==0.5.4

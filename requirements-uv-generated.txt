@@ -265,7 +265,7 @@ pydantic-settings==2.11.0
 pygments==2.19.2
 pympler==1.1
 pyparsing==3.2.5
-pypdf==5.9.0
+pypdf==6.4.0
 pyperclip==1.11.0
 pypika==0.48.9
 pyproject-hooks==1.2.0
