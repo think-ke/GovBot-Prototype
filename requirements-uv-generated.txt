@@ -285,7 +285,7 @@ python-iso639==2025.2.18
 python-magic==0.4.27
 python-multipart==0.0.20
 python-oxmsg==0.0.2
-python-socketio==5.14.3
+python-socketio==5.14.0
 pytz==2025.2
 pyyaml==6.0.3
 pyzmq==27.1.0
