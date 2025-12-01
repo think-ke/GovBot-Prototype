@@ -63,7 +63,7 @@ Flask==3.1.1
 flask-cors==6.0.1
 Flask-Login==0.6.3
 flatbuffers==25.2.10
-fonttools==4.58.4
+fonttools==4.61.0
 frozenlist==1.6.0
 fsspec==2025.3.2
 gevent==25.5.1
