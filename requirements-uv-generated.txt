@@ -169,7 +169,7 @@ markdownify==1.2.0
 markupsafe==3.0.3
 marshmallow==3.26.1
 matplotlib==3.10.7
-mcp==1.19.0
+mcp==1.23.0
 mdurl==0.1.2
 memory-profiler==0.61.0
 minio==7.2.18
