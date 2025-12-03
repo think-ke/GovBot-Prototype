@@ -1,0 +1,16 @@
+# Use Python slim image
+FROM python:3.11-slim
+
+WORKDIR /app
+
+# Install dependencies
+COPY requirements.txt .
+COPY app.py .
+
+RUN pip install --no-cache-dir --timeout 100 --retries 3 -r requirements.txt
+
+# Expose Chainlit port
+EXPOSE 8000
+
+# Run Chainlit app
+CMD ["chainlit", "run", "app.py"]

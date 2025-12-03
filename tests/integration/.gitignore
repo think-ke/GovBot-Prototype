@@ -1,0 +1,40 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# Virtual environments
+venv/
+env/
+ENV/
+
+# Test outputs
+*.log
+.pytest_cache/
+.coverage
+htmlcov/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Local environment
+.env
+.env.local
+
+# Test data (exclude generated files, keep templates)
+test_data/*.pdf
+test_data/*.docx
+test_data/*.mp3
+test_data/*.wav
+# Keep the test text file
+!test_data/test_immigration_faq.txt

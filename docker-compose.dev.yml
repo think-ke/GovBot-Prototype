@@ -1,0 +1,188 @@
+services:
+  api:
+    build:
+      args:
+        PIP_EXTRA_ARGS: "--no-cache-dir --no-binary=:all:"
+      context: .
+      dockerfile: docker/api.dev.Dockerfile
+    ports:
+      - "5005:5005"
+    volumes:
+      - ./app:/app/app
+      - ./.env.dev:/app/.env
+    env_file:
+      - .env.dev
+    environment:
+      DATABASE_URL: postgresql+asyncpg://postgres:${POSTGRES_PASSWORD:-postgres}@postgres-dev:5432/govstackdb
+      DB_AUTO_CREATE: "true"
+      MINIO_ENDPOINT: minio-dev
+      MINIO_PORT: 9000
+      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:-minioadmin}
+      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:-minioadmin}
+      MINIO_BUCKET_NAME: ${MINIO_BUCKET_NAME:-govstack-docs}
+    depends_on:
+      postgres-dev:
+        condition: service_healthy
+      chroma-dev:
+        condition: service_started
+      minio-dev:
+        condition: service_started
+    networks:
+      - govstack-dev-network
+    restart: unless-stopped
+
+  postgres-dev:
+    image: postgres:17.5
+    ports:
+  - "15433:5432"
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DB: govstackdb
+    volumes:
+      - ./data/postgres-dev:/var/lib/postgresql/data
+    networks:
+      - govstack-dev-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  backup-dev:
+    build:
+      context: .
+      dockerfile: docker/backup.Dockerfile
+    environment:
+      - POSTGRES_HOST=postgres-dev
+      - POSTGRES_PORT=5432
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-postgres}
+      - POSTGRES_DB=govstackdb
+      - BACKUP_SCHEDULE=0 */6 * * *  # Every 6 hours for dev
+      - BACKUP_RETENTION_DAYS=7      # Keep 7 days for dev
+    volumes:
+      - ./data/backups-dev:/backups
+    depends_on:
+      postgres-dev:
+        condition: service_healthy
+    networks:
+      - govstack-dev-network
+    restart: unless-stopped
+
+  chroma-dev:
+    image: chromadb/chroma:1.0.10.dev32
+    volumes:
+      - ./data/chroma-dev:/data
+      - ./server.htpasswd:/chroma/server.htpasswd:ro
+    ports:
+      - "18001:8000"
+    environment:
+      - AUTH_CREDENTIALS_FILE=/chroma/server.htpasswd
+      - AUTH_PROVIDER=basic
+    networks:
+      - govstack-dev-network
+    restart: unless-stopped
+
+  minio-dev:
+    image: minio/minio:latest
+    volumes:
+      - ./data/minio-dev:/data
+    ports:
+      - "${MINIO_DEV_PORT:-9002}:9000"
+      - "${MINIO_CONSOLE_DEV_PORT:-9092}:9001"
+    environment:
+      - MINIO_ROOT_USER=${MINIO_ACCESS_KEY:-minioadmin}
+      - MINIO_ROOT_PASSWORD=${MINIO_SECRET_KEY:-minioadmin}
+    command: server /data --console-address ":9002"
+    networks:
+      - govstack-dev-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 30s
+      timeout: 20s
+      retries: 3
+    restart: unless-stopped
+
+  analytics-dev:
+    build:
+      context: .
+      dockerfile: analytics/Dockerfile
+    ports:
+      - "${ANALYTICS_DEV_PORT:-8006}:8005"
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://postgres:${POSTGRES_PASSWORD:-postgres}@postgres-dev:5432/govstackdb
+    depends_on:
+      postgres-dev:
+        condition: service_healthy
+    networks:
+      - govstack-dev-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8005/analytics/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped
+
+  analytics-dashboard-dev:
+    build:
+      context: ./analytics-dashboard
+      dockerfile: Dockerfile
+    ports:
+      - "${ANALYTICS_DASHBOARD_DEV_PORT:-3002}:3000"
+    environment:
+      - NODE_ENV=development
+      - NEXT_TELEMETRY_DISABLED=1
+      - ANALYTICS_API_URL=http://analytics-dev:8005
+    volumes:
+      - ./analytics-dashboard:/app
+      - /app/node_modules
+      - /app/.next
+    depends_on:
+      - analytics-dev
+    networks:
+      - govstack-dev-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped
+
+  admin-dashboard-dev:
+    build:
+      context: ./admin-dashboard
+      dockerfile: Dockerfile
+    ports:
+      - "${ADMIN_DASHBOARD_DEV_PORT:-3011}:3010"
+    environment:
+      - NODE_ENV=development
+      - NEXT_TELEMETRY_DISABLED=1
+      - API_URL=http://api:5005
+    volumes:
+      - ./admin-dashboard:/app
+      - /app/node_modules
+      - /app/.next
+    depends_on:
+      - api
+    networks:
+      - govstack-dev-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3010/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped
+
+networks:
+  govstack-dev-network:
+    driver: bridge
+
+volumes:
+  postgres-dev-data:
+    driver: local
+  minio-dev-data:
+    driver: local

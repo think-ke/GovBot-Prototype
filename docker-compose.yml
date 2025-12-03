@@ -1,0 +1,166 @@
+name: govstack-server
+
+services:
+  govstack-server:
+    build: &govstack_api_build
+      args:
+        PIP_EXTRA_ARGS: "--no-cache-dir --no-binary=:all:"
+      context: .
+      dockerfile: docker/api.Dockerfile
+    ports:
+      - "5000:5000"
+    env_file: &govstack_env_files
+      - .env
+    volumes:
+      - ./data:/app/data
+      - ./storage:/app/storage
+    runtime: ${DOCKER_RUNTIME:-runc}
+    environment: &govstack_shared_env
+      - USE_GPU=${USE_GPU:-false}
+      - CHROMA_HOST=chroma
+      - CHROMA_PORT=8000  # Internal port, not the exposed port
+      - SENTRY_DSN=${SENTRY_DSN:-}  # Make Sentry DSN optional
+      - DATABASE_URL=postgresql+asyncpg://postgres:${POSTGRES_PASSWORD:-postgres}@postgres:5432/govstackdb
+      - DATABASE_MIGRATIONS_URL=postgresql://postgres:${POSTGRES_PASSWORD:-postgres}@postgres:5432/govstackdb
+      - MINIO_ENDPOINT=minio
+      - MINIO_PORT=9000
+      - MINIO_ACCESS_KEY=${MINIO_ACCESS_KEY:-minioadmin}
+      - MINIO_SECRET_KEY=${MINIO_SECRET_KEY:-minioadmin}
+      - MINIO_BUCKET_NAME=${MINIO_BUCKET_NAME:-govstack-docs}
+      - USE_UVLOOP=${USE_UVLOOP:-false}
+    networks:
+      - govstack-net
+    depends_on:
+      chroma:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+
+  alembic:
+    build: *govstack_api_build
+    env_file: *govstack_env_files
+    environment: *govstack_shared_env
+    working_dir: /app
+    entrypoint: ["alembic"]
+    command: ["upgrade", "head"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - govstack-net
+    restart: "no"
+
+  govstack_postgres:
+    image: postgres:15
+    restart: always
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=aisha
+      - POSTGRES_DB=govstack_db
+    volumes:
+      - ./data/postgres:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    networks:
+      - govstack-net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U govstack_user"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  govstack_chromadb:
+    image: chromadb/chroma:latest
+    restart: always
+    ports:
+      - "8050:8000"  # Host port 8050 -> container port 8000
+    environment:
+      - CHROMA_SERVER_AUTHN_CREDENTIALS_FILE=/chroma/server.htpasswd
+      - CHROMA_SERVER_AUTHN_PROVIDER=chromadb.auth.basic_authn.BasicAuthenticationServerProvider
+    volumes:
+      - ./data/chroma:/data:rw
+      - ./server.htpasswd:/chroma/server.htpasswd:ro
+    healthcheck:
+      test: [ "CMD", "/bin/bash", "-c", "cat < /dev/null > /dev/tcp/localhost/8000" ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - govstack-net
+
+  minio:
+    image: minio/minio:RELEASE.2025-04-22T22-12-26Z-cpuv1
+    volumes:
+      - ./data/minio:/data
+    ports:
+      - "${MINIO_PORT:-9000}:9000"
+      - "${MINIO_CONSOLE_PORT:-9001}:9001"
+    environment:
+      - MINIO_ROOT_USER=${MINIO_ACCESS_KEY:-minioadmin}
+      - MINIO_ROOT_PASSWORD=${MINIO_SECRET_KEY:-minioadmin}
+    command: server /data --console-address ":9001"
+    networks:
+      - govstack-net
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 30s
+      timeout: 20s
+      retries: 3
+    restart: unless-stopped
+
+  analytics:
+    build:
+      context: .
+      dockerfile: analytics/Dockerfile
+    ports:
+      - "${ANALYTICS_PORT:-8005}:8005"
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://govstack_user:govstack_pass@govstack_postgres:5432/govstack_db
+    depends_on:
+      govstack_postgres:
+        condition: service_healthy
+    networks:
+      - govstack-net
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8005/analytics/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped
+
+  analytics-dashboard:
+    build:
+      context: ./analytics-dashboard
+      dockerfile: Dockerfile
+    ports:
+      - "${ANALYTICS_DASHBOARD_PORT:-3001}:3000"
+    environment:
+      - NODE_ENV=production
+      - NEXT_TELEMETRY_DISABLED=1
+      - ANALYTICS_API_URL=http://analytics:8005
+    depends_on:
+      - analytics
+    networks:
+      - govstack-net
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped
+    profiles:
+      - standalone-analytics
+
+volumes:
+  data:
+    name: govstack_data
+  storage:
+    name: govstack_storage
+
+networks:
+  govstack-net:
+    name: govstack-net

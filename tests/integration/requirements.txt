@@ -1,0 +1,19 @@
+# GovStack Integration Test Requirements
+# Install with: pip install -r requirements.txt
+
+# HTTP client library
+requests>=2.31.0
+
+# URL handling and retries
+urllib3>=2.0.0
+
+# Optional: For better JSON handling
+# python-json-logger>=2.0.7
+
+# Optional: For colored terminal output
+# colorama>=0.4.6
+
+# Optional: For parallel test execution
+# pytest>=7.4.0
+# pytest-xdist>=3.3.0
+# pytest-timeout>=2.1.0

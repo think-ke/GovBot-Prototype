@@ -1,0 +1,1 @@
+docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' 9f5bef684ae8
