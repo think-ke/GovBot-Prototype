@@ -346,7 +346,7 @@ typing-inspection==0.4.2
 tzdata==2025.2
 unstructured==0.18.15
 unstructured-client==0.42.3
-urllib3==2.3.0
+urllib3==2.6.0
 uvicorn==0.38.0
 uvloop==0.22.1
 vadersentiment==3.3.2
