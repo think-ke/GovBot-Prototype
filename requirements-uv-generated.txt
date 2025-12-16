@@ -71,7 +71,7 @@ fasta2a==0.6.0
 fastapi==0.120.2
 fastavro==1.12.1
 fastmcp==2.13.0.2
-filelock==3.20.0
+filelock==3.20.1
 filetype==1.2.0
 flask==3.1.2
 flask-cors==6.0.1
