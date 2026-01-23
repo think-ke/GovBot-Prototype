@@ -204,7 +204,7 @@ presidio_anonymizer==2.2.359
 prometheus_client==0.22.1
 prompt_toolkit==3.0.51
 propcache==0.3.1
-protobuf==5.29.4
+protobuf==7.34.0rc1
 psutil==7.0.0
 psycopg2-binary==2.9.10
 pyasn1==0.6.1
