@@ -257,7 +257,7 @@ pycparser==2.23
 pycryptodome==3.23.0
 pydantic==2.12.3
 pydantic-ai==1.9.0
-pydantic-ai-slim==1.9.0
+pydantic-ai-slim==1.56.0
 pydantic-core==2.41.4
 pydantic-evals==1.9.0
 pydantic-graph==1.9.0

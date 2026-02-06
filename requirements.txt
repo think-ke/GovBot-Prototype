@@ -214,7 +214,7 @@ pycparser==2.22
 pycryptodome==3.23.0
 pydantic==2.11.7
 pydantic-ai==0.2.4
-pydantic-ai-slim==0.2.4
+pydantic-ai-slim==1.56.0
 pydantic-evals==0.2.4
 pydantic-graph==0.2.4
 pydantic-settings==2.9.1
