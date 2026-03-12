@@ -226,7 +226,7 @@ opentelemetry-sdk==1.38.0
 opentelemetry-semantic-conventions==0.59b0
 opentelemetry-semantic-conventions-ai==0.4.13
 opentelemetry-util-http==0.59b0
-orjson==3.11.4
+orjson==3.11.6
 ormsgpack==1.11.0
 overrides==7.7.0
 packaging==25.0
