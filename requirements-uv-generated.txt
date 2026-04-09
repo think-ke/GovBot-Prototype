@@ -262,7 +262,7 @@ pydantic-core==2.41.4
 pydantic-evals==1.9.0
 pydantic-graph==1.9.0
 pydantic-settings==2.11.0
-pygments==2.19.2
+pygments==2.20.0
 pympler==1.1
 pyparsing==3.2.5
 pypdf==5.9.0
