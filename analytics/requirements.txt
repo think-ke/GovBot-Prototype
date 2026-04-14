@@ -9,7 +9,7 @@ python-multipart==0.0.20
 python-dateutil==2.9.0.post0
 
 # Development dependencies
-pytest==8.4.1
+pytest==9.0.3
 pytest-asyncio==1.0.0
 pytest-cov==6.2.1
 httpx==0.28.1
