@@ -127,7 +127,7 @@ locust-cloud==1.24.2
 logfire==3.16.0
 logfire-api==3.16.0
 loguru==0.7.3
-lxml==6.0.2
+lxml==6.1.0
 Mako==1.3.10
 marisa-trie==1.3.1
 markdown-it-py==3.0.0
