@@ -280,7 +280,7 @@ pytest-xdist==3.8.0
 python-dateutil==2.9.0.post0
 python-docx==1.2.0
 python-dotenv==1.2.1
-python-engineio==4.12.3
+python-engineio==4.13.2
 python-iso639==2025.2.18
 python-magic==0.4.27
 python-multipart==0.0.20

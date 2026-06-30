@@ -236,7 +236,7 @@ pytest-xdist==3.7.0
 python-dateutil==2.9.0.post0
 python-docx==1.2.0
 python-dotenv==1.1.0
-python-engineio==4.12.2
+python-engineio==4.13.2
 python-multipart==0.0.20
 python-socketio==5.13.0
 pytz==2025.2
